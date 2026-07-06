@@ -1,0 +1,199 @@
+#!/bin/sh
+##############################################################################
+# zapret-gui : AsusWRT-Merlin Web UI addon for zapret
+#   Adds a "zapret" page under the router's Network Tools menu:
+#   live status, enable/disable/restart, editable strategy/ports/mode,
+#   hostlist editor, blockcheck runner, log viewer, optional installer.
+#
+#   Why the odd event-encoding: on some Merlin builds httpd does NOT persist
+#   custom nvram/amng_custom fields from web POSTs (only the rc_service event
+#   fires). So the page encodes settings as base64url, splits them into
+#   <128-char chunks, and streams them through rc_service events; this script
+#   reassembles + applies them. It is the only reliable web->backend channel
+#   on such firmware.
+#
+#   Repo: https://github.com/Jarvis322/Asus-Merlin-Zapret-GUI
+#   License: MIT
+##############################################################################
+ADDON="zapret-gui"
+ADDON_DIR="/jffs/addons/${ADDON}"
+ASP_SRC="${ADDON_DIR}/zapret-gui.asp"
+MENUTREE="/www/require/modules/menuTree.js"
+MENUTREE_TMP="/tmp/menuTree.js"
+# Menu anchor: the addon page is inserted right after this entry (Network Tools
+# -> Site Survey). Change it if your firmware's menuTree.js differs.
+MENU_ANCHOR='Advanced_Wireless_Survey.asp'
+ZAPRET_DIR="/opt/zapret"
+ZAPRET_INIT="${ZAPRET_DIR}/init.d/sysv/zapret"
+ZAPRET_CONF="${ZAPRET_DIR}/config"
+HOSTLIST="${ZAPRET_DIR}/ipset/zapret-hosts-user.txt"
+BLOCKLOG="/tmp/zapret-blockcheck.log"
+SE="/jffs/scripts/service-event"
+SEE="/jffs/scripts/service-event-end"
+SS="/jffs/scripts/services-start"
+TAG="# ${ADDON}"
+
+[ -f /usr/sbin/helper.sh ] && . /usr/sbin/helper.sh
+
+B64E()    { openssl base64 -A 2>/dev/null; }
+# base64url decode (rc_service names can't carry +/=)
+B64URL_D() { local b; b="$(echo "$1" | tr '_-' '/+')"; while [ $((${#b} % 4)) -ne 0 ]; do b="${b}="; done; echo "$b" | openssl base64 -d -A 2>/dev/null; }
+
+######## web page mount ################################################
+Mount_UI() {
+	local page
+	page="$(am_settings_get zapretgui_page)"
+	if [ -z "$page" ]; then
+		am_get_webui_page "$ASP_SRC"
+		[ "$am_webui_page" = "none" ] && { logger -t "$ADDON" "no free user page slot"; return 1; }
+		page="$am_webui_page"; am_settings_set zapretgui_page "$page"
+	fi
+	[ -f "$MENUTREE_TMP" ] || cp -f "$MENUTREE" "$MENUTREE_TMP"
+	sed -i "\\~tabName: \"zapret\"~d" "$MENUTREE_TMP"
+	sed -i "/url: \"${MENU_ANCHOR}\", tabName:/a {url: \"${page}\", tabName: \"zapret\"}," "$MENUTREE_TMP"
+	umount "$MENUTREE" 2>/dev/null
+	mount -o bind "$MENUTREE_TMP" "$MENUTREE"
+	Gen_Status
+	logger -t "$ADDON" "mounted as ${page}"
+}
+Unmount_UI() {
+	local page; page="$(am_settings_get zapretgui_page)"
+	umount "$MENUTREE" 2>/dev/null
+	[ -n "$page" ] && rm -f "/www/user/${page}"
+	sed -i "\\~tabName: \"zapret\"~d" "$MENUTREE_TMP" 2>/dev/null
+}
+
+######## build the page from the template with live values #############
+Gen_Status() {
+	local page enabled running pid qcount rules mode ports stamp strat ttl installed log_b64
+	page="$(am_settings_get zapretgui_page)"; [ -z "$page" ] && return
+	[ -x "$ZAPRET_INIT" ] && installed=1 || installed=0
+	enabled="$(grep -E '^NFQWS_ENABLE=' "$ZAPRET_CONF" 2>/dev/null | cut -d= -f2)"
+	mode="$(grep -E '^MODE_FILTER=' "$ZAPRET_CONF" 2>/dev/null | cut -d= -f2)"
+	ports="$(grep -E '^NFQWS_PORTS_TCP=' "$ZAPRET_CONF" 2>/dev/null | cut -d= -f2)"
+	strat="$(grep -oE 'dpi-desync=[a-z0-9,]+' "$ZAPRET_CONF" 2>/dev/null | head -1 | cut -d= -f2)"
+	ttl="$(grep -oE 'dpi-desync-ttl=[0-9]+' "$ZAPRET_CONF" 2>/dev/null | head -1 | cut -d= -f2)"
+	pid="$(pidof nfqws 2>/dev/null | awk '{print $1}')"
+	[ -n "$pid" ] && running=1 || running=0
+	qcount="$(awk '$1==200{print $8}' /proc/net/netfilter/nfnetlink_queue 2>/dev/null)"; [ -z "$qcount" ] && qcount=0
+	rules="$(iptables -t mangle -S 2>/dev/null | grep -c 'NFQUEUE --queue-num 200')"
+	stamp="$(date '+%Y-%m-%d %H:%M:%S')"
+	log_b64="$( { echo '### nfqws:'; cat /proc/$(pidof nfqws 2>/dev/null|awk '{print $1}')/cmdline 2>/dev/null | tr '\0' ' '; echo; echo; echo '### last restart log:'; tail -20 /tmp/zapret_restart.log 2>/dev/null; echo; echo '### blockcheck:'; tail -40 "$BLOCKLOG" 2>/dev/null; } | B64E )"
+	sed -e "s|@@ENABLED@@|${enabled:-0}|g" -e "s|@@RUNNING@@|${running}|g" \
+	    -e "s|@@PID@@|${pid:-}|g" -e "s|@@QCOUNT@@|${qcount}|g" -e "s|@@RULES@@|${rules}|g" \
+	    -e "s|@@MODE@@|${mode:-}|g" -e "s|@@PORTS@@|${ports:-}|g" -e "s|@@STAMP@@|${stamp}|g" \
+	    -e "s|@@STRAT@@|${strat:-fake}|g" -e "s|@@TTL@@|${ttl:-2}|g" \
+	    -e "s|@@INSTALLED@@|${installed}|g" -e "s|@@LOG_B64@@|${log_b64}|g" \
+	    -e "s|@@PAGE@@|${page}|g" \
+	    "$ASP_SRC" \
+	| awk -v hl="$HOSTLIST" '/@@HOSTAREA@@/{print "<textarea id=\"f_hosts\" rows=\"9\" style=\"width:99%;font-family:monospace;\" spellcheck=\"false\" oninput=\"upd_hc()\">"; while((getline l < hl)>0) print l; print "</textarea>"; next} {print}' \
+	    > "/www/user/${page}"
+}
+
+######## simple actions ################################################
+Do_Enable()  { sed -i 's/^NFQWS_ENABLE=.*/NFQWS_ENABLE=1/' "$ZAPRET_CONF"; "$ZAPRET_INIT" restart >/dev/null 2>&1; Gen_Status; }
+Do_Disable() { "$ZAPRET_INIT" stop >/dev/null 2>&1; sed -i 's/^NFQWS_ENABLE=.*/NFQWS_ENABLE=0/' "$ZAPRET_CONF"; Gen_Status; }
+Do_Restart() { "$ZAPRET_INIT" restart >/dev/null 2>&1; Gen_Status; }
+
+Strat_Line() {  # $1=strategy $2=ttl
+	case "$1" in
+		fake)          echo "--dpi-desync=fake --dpi-desync-ttl=$2" ;;
+		fakedsplit)    echo "--dpi-desync=fakedsplit --dpi-desync-ttl=$2" ;;
+		fakeddisorder) echo "--dpi-desync=fakeddisorder --dpi-desync-ttl=$2" ;;
+		disorder2)     echo "--dpi-desync=disorder2" ;;
+		split2)        echo "--dpi-desync=split2" ;;
+		multisplit)    echo "--dpi-desync=multisplit" ;;
+		*)             echo "--dpi-desync=fake --dpi-desync-ttl=$2" ;;
+	esac
+}
+
+######## apply settings decoded from the event blob ####################
+Apply_Event_Cfg() {
+	local dec en strat ttl ports mode hosts_raw sline p oi
+	dec="$(B64URL_D "$1")"
+	[ -z "$dec" ] && { logger -t "$ADDON" "event cfg decode failed"; return 1; }
+	en="$(echo "$dec" | sed -n 's/^enable=//p')"; [ "$en" = "1" ] || en=0
+	strat="$(echo "$dec" | sed -n 's/^strat=//p' | tr -cd 'a-z0-9')"
+	ttl="$(echo "$dec" | sed -n 's/^ttl=//p' | tr -cd '0-9')"; [ -z "$ttl" ] && ttl=2
+	ports="$(echo "$dec" | sed -n 's/^ports=//p' | tr -cd '0-9,')"; [ -z "$ports" ] && ports=80,443
+	mode="$(echo "$dec" | sed -n 's/^mode=//p' | tr -cd 'a-z')"; case "$mode" in hostlist|autohostlist|all) ;; *) mode=hostlist ;; esac
+	hosts_raw="$(echo "$dec" | sed -n 's/^hosts=//p')"
+	[ -f "$ZAPRET_CONF" ] || return 1
+	cp -f "$ZAPRET_CONF" "${ZAPRET_CONF}.bak-gui"
+	sed -i "s/^NFQWS_ENABLE=.*/NFQWS_ENABLE=$en/"         "$ZAPRET_CONF"
+	sed -i "s/^NFQWS_PORTS_TCP=.*/NFQWS_PORTS_TCP=$ports/" "$ZAPRET_CONF"
+	sed -i "s/^MODE_FILTER=.*/MODE_FILTER=$mode/"         "$ZAPRET_CONF"
+	sline="$(Strat_Line "$strat" "$ttl")"
+	{ echo "NFQWS_OPT=\""; oi="$IFS"; IFS=','; for p in $ports; do echo "--filter-tcp=$p $sline <HOSTLIST> --new"; done; IFS="$oi"; echo "\""; } > /tmp/zg_opt
+	awk 'BEGIN{while((getline l < "/tmp/zg_opt")>0) buf=buf l "\n"} /^NFQWS_OPT=/{printf "%s", buf; skip=1; next} skip==1{ if($0=="\"") skip=0; next } {print}' "$ZAPRET_CONF" > "${ZAPRET_CONF}.new" && mv "${ZAPRET_CONF}.new" "$ZAPRET_CONF"
+	rm -f /tmp/zg_opt
+	[ -n "$hosts_raw" ] && printf '%s\n' "$hosts_raw" | tr '~' '\n' > "$HOSTLIST"
+	if [ "$en" = "1" ]; then "$ZAPRET_INIT" restart >/dev/null 2>&1; else "$ZAPRET_INIT" stop >/dev/null 2>&1; fi
+	logger -t "$ADDON" "applied: en=$en strat=$strat ttl=$ttl ports=$ports mode=$mode hostlist_chars=${#hosts_raw}"
+	Gen_Status
+}
+
+Do_Blockcheck_Ev() {
+	local dom; dom="$(B64URL_D "$1" | sed -n 's/^bc=//p' | tr -cd 'a-zA-Z0-9.-')"; [ -z "$dom" ] && dom=rutracker.org
+	echo "blockcheck: $dom - $(date)" > "$BLOCKLOG"
+	( DOMAINS="$dom" BATCH=1 CURL_MAX_TIME=3 sh "${ZAPRET_DIR}/blockcheck.sh" >> "$BLOCKLOG" 2>&1; echo '### done ###' >> "$BLOCKLOG"; Gen_Status ) &
+	Gen_Status
+}
+
+Do_Install() {  # best effort helper; run blockcheck afterwards to pick a strategy
+	local url="https://github.com/bol-van/zapret.git"
+	echo "zapret install started - $(date)" > /tmp/zapret_restart.log
+	{
+		if [ -x "$ZAPRET_INIT" ]; then echo "already installed."; else
+			command -v git >/dev/null 2>&1 && git clone --depth 1 "$url" "$ZAPRET_DIR"
+			[ -x "${ZAPRET_DIR}/install_bin.sh" ] && sh "${ZAPRET_DIR}/install_bin.sh"
+		fi
+		echo "### install step done ###"
+	} >> /tmp/zapret_restart.log 2>&1 &
+	Gen_Status
+}
+
+######## persistence hooks + install/uninstall #########################
+Add_Hook() { [ -f "$1" ] || { echo "#!/bin/sh" > "$1"; chmod 0755 "$1"; }; grep -qF "$2" "$1" || echo "$2" >> "$1"; }
+Install() {
+	Add_Hook "$SS"  "[ -x ${ADDON_DIR}/${ADDON}.sh ] && ${ADDON_DIR}/${ADDON}.sh mount & ${TAG}"
+	Add_Hook "$SEE" "[ -x ${ADDON_DIR}/${ADDON}.sh ] && ${ADDON_DIR}/${ADDON}.sh event \"\$@\" & ${TAG}"
+	chmod 0755 "${ADDON_DIR}/${ADDON}.sh"; Mount_UI; echo "installed"
+}
+Uninstall() {
+	Unmount_UI
+	sed -i "\\~${TAG}~d" "$SS"  2>/dev/null; sed -i "\\~${TAG}~d" "$SE" 2>/dev/null; sed -i "\\~${TAG}~d" "$SEE" 2>/dev/null
+	am_settings_set zapretgui_page ""; echo "uninstalled"
+}
+
+# service-event dispatcher. The page streams settings as base64url chunks via
+# rc_service events: zgR = reset+first chunk, zgA = append, zgZ = end -> apply.
+Handle_Event() {
+	ev="$(printf '%s' "$*")"
+	case "$ev" in
+		"restart zgR"*)  printf '%s' "${ev#restart zgR}" > /tmp/zg_blob ;;
+		"restart zgA"*)  printf '%s' "${ev#restart zgA}" >> /tmp/zg_blob ;;
+		"restart zgZ"*)  Apply_Event_Cfg "$(cat /tmp/zg_blob 2>/dev/null)" ;;
+		*zgbc*)          Do_Blockcheck_Ev "${ev#*zgbc}" ;;
+		*zapretinstall*) Do_Install ;;
+		*zapretrestart*) Do_Restart ;;
+		*zapreton*)      Do_Enable ;;
+		*zapretoff*)     Do_Disable ;;
+		*zapretstatus*)  Gen_Status ;;
+	esac
+	# re-mount page + menu after httpd restarts (tmpfs is rebuilt)
+	if printf '%s' "$ev" | grep -qE '(start|restart).*httpd'; then sleep 3; Mount_UI; fi
+}
+
+case "$1" in
+	install)   Install ;;
+	uninstall) Uninstall ;;
+	mount)     Mount_UI ;;
+	unmount)   Unmount_UI ;;
+	status)    Gen_Status ;;
+	event)     shift; Handle_Event "$@" ;;
+	enable)    Do_Enable ;;
+	disable)   Do_Disable ;;
+	restart)   Do_Restart ;;
+	*) echo "usage: $0 {install|uninstall|mount|unmount|status|enable|disable|restart}" ;;
+esac
