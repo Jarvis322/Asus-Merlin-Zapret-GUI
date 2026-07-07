@@ -170,6 +170,9 @@ function do_install(){
 .zg-ok{color:#66ff99;font-weight:700;}
 .zg-bad{color:#ff8f8f;font-weight:700;}
 .zg-wizard-foot{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;}
+.zg-credit{text-align:center;color:#aebcc0;font-size:12px;margin:14px 0 2px 0;}
+.zg-credit a{color:#9cff9c;text-decoration:none;}
+.zg-credit a:hover{text-decoration:underline;}
 @media(max-width:760px){.zg-head{display:block}.zg-overall{display:inline-block;margin-top:10px}.zg-table th,.zg-table td{display:block;width:auto}.zg-actions{justify-content:stretch}.zg-btn{flex:1 1 45%;}}
 @media(max-width:760px){.zg-wizard-grid{grid-template-columns:1fr;}}
 </style>
@@ -305,6 +308,7 @@ function do_install(){
 </div>
 </div>
 </div><!-- main_panel -->
+<div class="zg-credit">Developed by <a href="https://x.com/yigitech" target="_blank" rel="noopener">x.com/yigitech</a></div>
 </div><!-- zg-wrap -->
 
 </td></tr></tbody></table>

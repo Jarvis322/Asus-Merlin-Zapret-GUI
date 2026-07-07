@@ -107,6 +107,7 @@ The default mode is intended to keep zapret scoped: only domains in the hostlist
 
 ## Credits
 
+- Developed by [x.com/yigitech](https://x.com/yigitech)
 - [zapret](https://github.com/bol-van/zapret) by **bol-van**
 - [Asuswrt‑Merlin](https://www.asuswrt-merlin.net/) by **RMerl**
 
