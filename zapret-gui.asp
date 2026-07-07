@@ -25,7 +25,7 @@ var zapret_enabled='@@ENABLED@@', zapret_running='@@RUNNING@@', zapret_pid='@@PI
     zapret_ports='@@PORTS@@', zapret_stamp='@@STAMP@@', zapret_strat='@@STRAT@@',
     zapret_ttl='@@TTL@@', zapret_installed='@@INSTALLED@@', zapret_log_b64='@@LOG_B64@@';
 function $id(x){ return document.getElementById(x); }
-function yn(v){ return (v=='1')?'<span style="color:#093">&#10004; Evet</span>':'<span style="color:#c33">&#10008; Hay&#305;r</span>'; }
+function yn(v){ return (v=='1')?'<span style="color:#66ff99;font-weight:700">&#10004; Evet</span>':'<span style="color:#ff8f8f;font-weight:700">&#10008; Hay&#305;r</span>'; }
 function setSel(id,val){ var s=$id(id); if(!s)return; for(var i=0;i<s.options.length;i++){ if(s.options[i].value==val){ s.selectedIndex=i; return; } } }
 function initial(){
 	var pg=location.pathname.replace(/^\//,'');
@@ -59,7 +59,8 @@ function fill_form(){
 function upd_hc(){
 	var t=$id('f_hosts'); if(!t) return;
 	var v=t.value.replace(/\r/g,'').replace(/\n+$/,'');
-	$id('hc').textContent='satır: '+(v?v.split('\n').length:0);
+	var n=(v?v.split('\n').filter(function(x){return x.replace(/\s/g,'').length>0;}).length:0);
+	$id('hc').textContent='satir: '+n;
 }
 function post_action(script,wait,reloadMs){
 	document.form.action_script.value=script;
@@ -103,6 +104,31 @@ function do_install(){
 	alert('Kurulum arka planda başladı. ~1 dk sonra "Yenile" ile Log bölümünü izleyin.');
 }
 </script>
+
+<style type="text/css">
+.zg-wrap{max-width:980px;margin:0 auto 18px auto;color:#dbe5e8;}
+.zg-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:6px 0 14px 0;padding:16px 18px;border:1px solid rgba(255,255,255,.12);border-radius:8px;background:linear-gradient(135deg,#26383d,#172326);box-shadow:0 1px 0 rgba(255,255,255,.06) inset;}
+.zg-title{font-size:24px;font-weight:700;color:#fff;text-shadow:0 1px 2px #000;}
+.zg-version{font-size:12px;color:#9cff9c;margin-left:6px;}
+.zg-overall{font-size:14px;padding:8px 12px;border-radius:999px;background:rgba(0,0,0,.22);white-space:nowrap;}
+.zg-card{margin:12px 0 16px 0;border:1px solid rgba(255,255,255,.13);border-radius:8px;overflow:hidden;background:#34484d;box-shadow:0 10px 24px rgba(0,0,0,.16);}
+.zg-card-title{padding:10px 14px;font-size:15px;font-weight:700;color:#fff;background:linear-gradient(#77878b,#617277);border-bottom:1px solid rgba(0,0,0,.35);}
+.zg-table{width:100%;border-collapse:collapse;}
+.zg-table th,.zg-table td{padding:11px 14px;border-bottom:1px solid rgba(0,0,0,.32);border-right:1px solid rgba(0,0,0,.22);font-size:14px;}
+.zg-table th{width:34%;text-align:left;color:#eef5f6;background:rgba(0,0,0,.16);}
+.zg-table td{background:rgba(255,255,255,.035);}
+.zg-actions{text-align:center;margin:12px 0 18px 0;display:flex;gap:8px;justify-content:center;flex-wrap:wrap;}
+.zg-btn{min-width:122px;border:0;border-radius:7px;padding:10px 14px;background:#10191b;color:#fff;font-weight:700;cursor:pointer;box-shadow:0 1px 0 rgba(255,255,255,.08) inset,0 1px 4px rgba(0,0,0,.25);}
+.zg-btn:hover{background:#172528;}
+.zg-btn-save{background:#078a36;}
+.zg-btn-save:hover{background:#0a9d40;}
+.zg-input,.zg-select{background:#5b6f74;color:#fff;border:1px solid #93a4a8;border-radius:4px;padding:7px 8px;min-height:34px;box-sizing:border-box;}
+.zg-hosts{width:100%;min-height:180px;box-sizing:border-box;font-family:Menlo,Consolas,monospace;font-size:14px;line-height:1.45;padding:12px;border:1px solid #aab7ba;border-radius:6px;background:#f7fafb;color:#111;resize:vertical;}
+.zg-meta{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:7px;color:#cdd7da;font-size:12px;}
+.zg-hint{color:#aebcc0;}
+.zg-log{background:#111b1d;color:#8dff8d;padding:10px;border-radius:6px;height:200px;overflow:auto;font-size:11px;white-space:pre-wrap;border:1px solid rgba(255,255,255,.1);}
+@media(max-width:760px){.zg-head{display:block}.zg-overall{display:inline-block;margin-top:10px}.zg-table th,.zg-table td{display:block;width:auto}.zg-actions{justify-content:stretch}.zg-btn{flex:1 1 45%;}}
+</style>
 </head>
 <body onload="initial();" class="bg">
 <div id="TopBanner"></div>
@@ -128,21 +154,20 @@ function do_install(){
 <table width="98%" border="0" align="left" cellpadding="0" cellspacing="0"><tr><td valign="top">
 <table width="760px" border="0" cellpadding="4" cellspacing="0" class="FormTitle" id="FormTitle"><tbody>
 <tr><td bgcolor="#4D595D" valign="top"><div>&nbsp;</div>
-<div class="formfonttitle">zapret &mdash; DPI Bypass <span style="font-size:12px;color:#9f9;">v1.0</span></div>
-<div style="margin:10px 0 10px 5px;" class="splitLine"></div>
+<div class="zg-wrap">
+<div class="zg-head"><div class="zg-title">zapret &mdash; DPI Bypass <span class="zg-version">v1.0</span></div><div id="st_overall" class="zg-overall">&#8230;</div></div>
 
 <!-- INSTALL PANEL (only if zapret is not installed) -->
 <div id="install_panel" style="display:none;">
 <div class="formfontdesc">zapret bu cihazda <b>kurulu de&#287;il</b>. A&#351;a&#287;&#305;daki buton zapret'i GitHub'dan indirip ikili dosyalar&#305;n&#305; kurar (deneysel; internet gerekir). Sonras&#305;nda strateji i&ccedil;in blockcheck &ccedil;al&#305;&#351;t&#305;r&#305;n.</div>
-<div style="margin:12px 5px;"><input class="button_gen" onclick="do_install();" type="button" value="zapret'i Kur"></div>
+<div style="margin:12px 5px;"><input class="zg-btn" onclick="do_install();" type="button" value="zapret'i Kur"></div>
 </div>
 
 <!-- MAIN PANEL -->
 <div id="main_panel">
-<div id="st_overall" style="margin:8px 0 12px 5px;font-size:15px;">&#8230;</div>
-
-<table width="99%" border="1" align="center" cellpadding="4" cellspacing="0" class="FormTable">
-<thead><tr><td colspan="2">Durum</td></tr></thead>
+<div class="zg-card">
+<div class="zg-card-title">Durum</div>
+<table class="zg-table">
 <tr><th width="40%">Etkin (config)</th><td id="st_enabled">-</td></tr>
 <tr><th>nfqws &ccedil;al&#305;&#351;&#305;yor</th><td id="st_running">-</td></tr>
 <tr><th>nfqws PID</th><td id="st_pid">-</td></tr>
@@ -151,18 +176,20 @@ function do_install(){
 <tr><th>Mod</th><td id="st_mode">-</td></tr>
 <tr><th>Portlar (TCP)</th><td id="st_ports">-</td></tr>
 </table>
-<div style="margin:12px 0;text-align:center;">
-<input class="button_gen" onclick="do_action('zapreton');" type="button" value="A&ccedil;">
-<input class="button_gen" onclick="do_action('zapretrestart');" type="button" value="Yeniden Ba&#351;lat">
-<input class="button_gen" onclick="do_action('zapretoff');" type="button" value="Kapat">
-<input class="button_gen" onclick="location.reload();" type="button" value="Yenile">
+</div>
+<div class="zg-actions">
+<input class="zg-btn" onclick="do_action('zapreton');" type="button" value="A&ccedil;">
+<input class="zg-btn" onclick="do_action('zapretrestart');" type="button" value="Yeniden Ba&#351;lat">
+<input class="zg-btn" onclick="do_action('zapretoff');" type="button" value="Kapat">
+<input class="zg-btn" onclick="location.reload();" type="button" value="Yenile">
 </div>
 
 <!-- SETTINGS -->
-<table width="99%" border="1" align="center" cellpadding="4" cellspacing="0" class="FormTable">
-<thead><tr><td colspan="2">Ayarlar</td></tr></thead>
+<div class="zg-card">
+<div class="zg-card-title">Ayarlar</div>
+<table class="zg-table">
 <tr><th width="40%">Etkin</th><td><input type="checkbox" id="f_enable"></td></tr>
-<tr><th>Strateji</th><td><select id="f_strat" class="input_option">
+<tr><th>Strateji</th><td><select id="f_strat" class="zg-select">
 <option value="fake">fake (varsay&#305;lan)</option>
 <option value="fakedsplit">fakedsplit</option>
 <option value="fakeddisorder">fakeddisorder</option>
@@ -170,39 +197,48 @@ function do_install(){
 <option value="split2">split2</option>
 <option value="multisplit">multisplit</option>
 </select></td></tr>
-<tr><th>TTL (fake i&ccedil;in)</th><td><input type="text" id="f_ttl" class="input_6_table" maxlength="3" value="2"></td></tr>
-<tr><th>Portlar (TCP, virg&uuml;lle)</th><td><input type="text" id="f_ports" class="input_15_table" maxlength="64" value="80,443"></td></tr>
-<tr><th>Mod</th><td><select id="f_mode" class="input_option">
+<tr><th>TTL (fake i&ccedil;in)</th><td><input type="text" id="f_ttl" class="zg-input" maxlength="3" value="2"></td></tr>
+<tr><th>Portlar (TCP, virg&uuml;lle)</th><td><input type="text" id="f_ports" class="zg-input" maxlength="64" value="80,443"></td></tr>
+<tr><th>Mod</th><td><select id="f_mode" class="zg-select">
 <option value="hostlist">hostlist (sadece liste)</option>
 <option value="autohostlist">autohostlist (otomatik)</option>
 <option value="all">all (t&uuml;m trafik)</option>
 </select></td></tr>
 </table>
+</div>
 
 <!-- HOSTLIST (textarea content is server-rendered at @@HOSTAREA@@) -->
-<table width="99%" border="1" align="center" cellpadding="4" cellspacing="0" class="FormTable">
-<thead><tr><td>Hostlist (her sat&#305;ra bir domain)</td></tr></thead>
-<tr><td>
+<div class="zg-card">
+<div class="zg-card-title">Hostlist</div>
+<div style="padding:12px 14px;">
 @@HOSTAREA@@
-<div id="hc" class="formfontdesc" style="margin-top:4px;">sat&#305;r: 0</div>
-</td></tr>
-</table>
-<div style="margin:12px 0;text-align:center;">
-<input class="button_gen" style="background:#093;" onclick="save_apply();" type="button" value="Kaydet &amp; Uygula">
+<div class="zg-meta"><span id="hc">satir: 0</span><span class="zg-hint">Her satira bir domain. Sadece listedeki hedefler islenir.</span></div>
+</div>
+</div>
+<div class="zg-actions">
+<input class="zg-btn zg-btn-save" onclick="save_apply();" type="button" value="Kaydet &amp; Uygula">
 </div>
 
 <!-- TOOLS / BLOCKCHECK / LOG -->
-<table width="99%" border="1" align="center" cellpadding="4" cellspacing="0" class="FormTable">
-<thead><tr><td colspan="2">Ara&ccedil;lar</td></tr></thead>
+<div class="zg-card">
+<div class="zg-card-title">Ara&ccedil;lar</div>
+<table class="zg-table">
 <tr><th width="40%">Blockcheck test domaini</th><td>
-<input type="text" id="f_bcdomain" class="input_15_table" value="rutracker.org">
-<input class="button_gen" onclick="run_blockcheck();" type="button" value="Blockcheck &ccedil;al&#305;&#351;t&#305;r">
+<input type="text" id="f_bcdomain" class="zg-input" value="rutracker.org">
+<input class="zg-btn" onclick="run_blockcheck();" type="button" value="Blockcheck &ccedil;al&#305;&#351;t&#305;r">
 </td></tr>
 </table>
-<div class="formfontdesc" style="margin-top:8px;">Log (nfqws komutu + restart + blockcheck &ccedil;&#305;kt&#305;s&#305;):</div>
-<pre id="f_log" style="background:#1a1a1a;color:#7f7;padding:8px;height:200px;overflow:auto;font-size:11px;white-space:pre-wrap;">-</pre>
+</div>
+<div class="zg-card">
+<div class="zg-card-title">Log</div>
+<div style="padding:12px 14px;">
+<div class="formfontdesc" style="margin-top:0;">Log (nfqws komutu + restart + blockcheck &ccedil;&#305;kt&#305;s&#305;):</div>
+<pre id="f_log" class="zg-log">-</pre>
 <div class="formfontdesc" style="margin-top:10px;color:#FC0;">Not: &quot;Kaydet &amp; Uygula&quot; config'i yede&#287;e al&#305;p (config.bak-gui) zapret'i yeniden ba&#351;lat&#305;r. De&#287;i&#351;iklik sonras&#305; sayfa otomatik yenilenir.</div>
+</div>
+</div>
 </div><!-- main_panel -->
+</div><!-- zg-wrap -->
 
 </td></tr></tbody></table>
 </td></tr></table>

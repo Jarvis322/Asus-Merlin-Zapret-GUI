@@ -27,6 +27,7 @@ ZAPRET_DIR="/opt/zapret"
 ZAPRET_INIT="${ZAPRET_DIR}/init.d/sysv/zapret"
 ZAPRET_CONF="${ZAPRET_DIR}/config"
 HOSTLIST="${ZAPRET_DIR}/ipset/zapret-hosts-user.txt"
+HOSTLIST_EXCLUDE="${ZAPRET_DIR}/ipset/zapret-hosts-user-exclude.txt"
 BLOCKLOG="/tmp/zapret-blockcheck.log"
 SE="/jffs/scripts/service-event"
 SEE="/jffs/scripts/service-event-end"
@@ -39,9 +40,56 @@ B64E()    { openssl base64 -A 2>/dev/null; }
 # base64url decode (rc_service names can't carry +/=)
 B64URL_D() { local b; b="$(echo "$1" | tr '_-' '/+')"; while [ $((${#b} % 4)) -ne 0 ]; do b="${b}="; done; echo "$b" | openssl base64 -d -A 2>/dev/null; }
 
+Ensure_Default_Lists() {
+	[ -d "${ZAPRET_DIR}/ipset" ] || return 0
+	if [ ! -s "$HOSTLIST" ]; then
+		printf '%s\n' "discord.com" > "$HOSTLIST"
+	fi
+	if [ ! -s "$HOSTLIST_EXCLUDE" ]; then
+		cat > "$HOSTLIST_EXCLUDE" <<'EOF'
+# Apple / App Store / iCloud / software updates
+apple.com
+mzstatic.com
+aaplimg.com
+cdn-apple.com
+icloud.com
+icloud-content.com
+apple-dns.net
+itunes.com
+
+# OpenAI / ChatGPT
+openai.com
+chatgpt.com
+oaistatic.com
+oaiusercontent.com
+openaiapi-site.azureedge.net
+
+# Anthropic / Claude
+anthropic.com
+claude.ai
+
+# Google / Gemini
+google.com
+gemini.google.com
+googleapis.com
+gstatic.com
+googleusercontent.com
+googleusercontent.cn
+withgoogle.com
+
+# Common AI/CDN/auth dependencies
+cloudflare.com
+cloudflareaccess.com
+challenges.cloudflare.com
+EOF
+	fi
+	chmod 0666 "$HOSTLIST" "$HOSTLIST_EXCLUDE" 2>/dev/null
+}
+
 ######## web page mount ################################################
 Mount_UI() {
 	local page
+	Ensure_Default_Lists
 	page="$(am_settings_get zapretgui_page)"
 	if [ -z "$page" ]; then
 		am_get_webui_page "$ASP_SRC"
@@ -76,7 +124,9 @@ Gen_Status() {
 	pid="$(pidof nfqws 2>/dev/null | awk '{print $1}')"
 	[ -n "$pid" ] && running=1 || running=0
 	qcount="$(awk '$1==200{print $8}' /proc/net/netfilter/nfnetlink_queue 2>/dev/null)"; [ -z "$qcount" ] && qcount=0
-	rules="$(iptables -t mangle -S 2>/dev/null | grep -c 'NFQUEUE --queue-num 200')"
+	# Some AsusWRT builds make `iptables -S` fail when vendor targets like
+	# SKIPLOG are present.  The verbose listing still works and shows NFQUEUE.
+	rules="$(iptables -t mangle -L -n 2>/dev/null | grep -c 'NFQUEUE.*num 200')"
 	stamp="$(date '+%Y-%m-%d %H:%M:%S')"
 	log_b64="$( { echo '### nfqws:'; cat /proc/$(pidof nfqws 2>/dev/null|awk '{print $1}')/cmdline 2>/dev/null | tr '\0' ' '; echo; echo; echo '### last restart log:'; tail -20 /tmp/zapret_restart.log 2>/dev/null; echo; echo '### blockcheck:'; tail -40 "$BLOCKLOG" 2>/dev/null; } | B64E )"
 	sed -e "s|@@ENABLED@@|${enabled:-0}|g" -e "s|@@RUNNING@@|${running}|g" \
@@ -86,7 +136,7 @@ Gen_Status() {
 	    -e "s|@@INSTALLED@@|${installed}|g" -e "s|@@LOG_B64@@|${log_b64}|g" \
 	    -e "s|@@PAGE@@|${page}|g" \
 	    "$ASP_SRC" \
-	| awk -v hl="$HOSTLIST" '/@@HOSTAREA@@/{print "<textarea id=\"f_hosts\" rows=\"9\" style=\"width:99%;font-family:monospace;\" spellcheck=\"false\" oninput=\"upd_hc()\">"; while((getline l < hl)>0) print l; print "</textarea>"; next} {print}' \
+	| awk -v hl="$HOSTLIST" '$0=="@@HOSTAREA@@"{print "<textarea id=\"f_hosts\" class=\"zg-hosts\" rows=\"9\" spellcheck=\"false\" oninput=\"upd_hc()\">"; while((getline l < hl)>0) print l; print "</textarea>"; next} {print}' \
 	    > "/www/user/${page}"
 }
 
@@ -127,7 +177,11 @@ Apply_Event_Cfg() {
 	{ echo "NFQWS_OPT=\""; oi="$IFS"; IFS=','; for p in $ports; do echo "--filter-tcp=$p $sline <HOSTLIST> --new"; done; IFS="$oi"; echo "\""; } > /tmp/zg_opt
 	awk 'BEGIN{while((getline l < "/tmp/zg_opt")>0) buf=buf l "\n"} /^NFQWS_OPT=/{printf "%s", buf; skip=1; next} skip==1{ if($0=="\"") skip=0; next } {print}' "$ZAPRET_CONF" > "${ZAPRET_CONF}.new" && mv "${ZAPRET_CONF}.new" "$ZAPRET_CONF"
 	rm -f /tmp/zg_opt
-	[ -n "$hosts_raw" ] && printf '%s\n' "$hosts_raw" | tr '~' '\n' > "$HOSTLIST"
+	if [ -n "$hosts_raw" ]; then
+		printf '%s\n' "$hosts_raw" | tr '~' '\n' > "$HOSTLIST"
+	else
+		: > "$HOSTLIST"
+	fi
 	if [ "$en" = "1" ]; then "$ZAPRET_INIT" restart >/dev/null 2>&1; else "$ZAPRET_INIT" stop >/dev/null 2>&1; fi
 	logger -t "$ADDON" "applied: en=$en strat=$strat ttl=$ttl ports=$ports mode=$mode hostlist_chars=${#hosts_raw}"
 	Gen_Status
@@ -148,6 +202,7 @@ Do_Install() {  # best effort helper; run blockcheck afterwards to pick a strate
 			command -v git >/dev/null 2>&1 && git clone --depth 1 "$url" "$ZAPRET_DIR"
 			[ -x "${ZAPRET_DIR}/install_bin.sh" ] && sh "${ZAPRET_DIR}/install_bin.sh"
 		fi
+		Ensure_Default_Lists
 		echo "### install step done ###"
 	} >> /tmp/zapret_restart.log 2>&1 &
 	Gen_Status
@@ -156,6 +211,7 @@ Do_Install() {  # best effort helper; run blockcheck afterwards to pick a strate
 ######## persistence hooks + install/uninstall #########################
 Add_Hook() { [ -f "$1" ] || { echo "#!/bin/sh" > "$1"; chmod 0755 "$1"; }; grep -qF "$2" "$1" || echo "$2" >> "$1"; }
 Install() {
+	Ensure_Default_Lists
 	Add_Hook "$SS"  "[ -x ${ADDON_DIR}/${ADDON}.sh ] && ${ADDON_DIR}/${ADDON}.sh mount & ${TAG}"
 	Add_Hook "$SEE" "[ -x ${ADDON_DIR}/${ADDON}.sh ] && ${ADDON_DIR}/${ADDON}.sh event \"\$@\" & ${TAG}"
 	chmod 0755 "${ADDON_DIR}/${ADDON}.sh"; Mount_UI; echo "installed"
@@ -172,8 +228,11 @@ Handle_Event() {
 	ev="$(printf '%s' "$*")"
 	case "$ev" in
 		"restart zgR"*)  printf '%s' "${ev#restart zgR}" > /tmp/zg_blob ;;
+		"restart_zgR"*)  printf '%s' "${ev#restart_zgR}" > /tmp/zg_blob ;;
 		"restart zgA"*)  printf '%s' "${ev#restart zgA}" >> /tmp/zg_blob ;;
+		"restart_zgA"*)  printf '%s' "${ev#restart_zgA}" >> /tmp/zg_blob ;;
 		"restart zgZ"*)  Apply_Event_Cfg "$(cat /tmp/zg_blob 2>/dev/null)" ;;
+		"restart_zgZ"*)  Apply_Event_Cfg "$(cat /tmp/zg_blob 2>/dev/null)" ;;
 		*zgbc*)          Do_Blockcheck_Ev "${ev#*zgbc}" ;;
 		*zapretinstall*) Do_Install ;;
 		*zapretrestart*) Do_Restart ;;

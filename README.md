@@ -14,6 +14,7 @@ It adds a **zapret** tab under **Network Tools** with live status, one‑click c
 - **One‑click control** — Enable / Disable / Restart
 - **Editable settings** — desync strategy (`fake`, `fakedsplit`, `fakeddisorder`, `disorder2`, `split2`, `multisplit`), TTL, TCP ports, filter mode (`hostlist` / `autohostlist` / `all`)
 - **Hostlist editor** — edit the user hostlist in a textarea with a live line counter; works for lists of any size (auto‑chunked)
+- **Safe defaults** — first install creates `discord.com` as the starter hostlist and an exclude list for Apple, ChatGPT/OpenAI, Claude/Anthropic, Gemini/Google and common Cloudflare auth/CDN hosts
 - **Blockcheck** runner (background) + **log viewer**
 - **Optional installer** — a button to download zapret if it isn't installed yet (experimental)
 - Config is **backed up** to `config.bak-gui` on every apply
@@ -70,6 +71,15 @@ The only reliable web→backend channel that survives is the **`rc_service` even
 
 If your firmware *does* persist web POST fields, this still works — it just uses a channel that always works.
 
+### Default hostlists
+
+On first mount/install, the addon creates the zapret hostlist only when it is missing or empty:
+
+- `/opt/zapret/ipset/zapret-hosts-user.txt` starts with `discord.com`
+- `/opt/zapret/ipset/zapret-hosts-user-exclude.txt` starts with Apple/App Store/iCloud update domains, OpenAI/ChatGPT domains, Claude/Anthropic domains, Gemini/Google domains and common Cloudflare auth/CDN dependencies
+
+The default mode is intended to keep zapret scoped: only domains in the hostlist are processed, while Apple and common AI tools are kept out of zapret matching. The GUI allows saving an intentionally empty hostlist; this clears the file instead of silently keeping old entries.
+
 ### Persistence hooks
 
 | Event | Hook |
@@ -82,6 +92,7 @@ If your firmware *does* persist web POST fields, this still works — it just us
 - The UI text is **Turkish**. It's plain HTML/JS — translate the labels in `zapret-gui.asp` if you like.
 - The menu is injected after `Advanced_Wireless_Survey.asp` (Network Tools → Site Survey). If your firmware's `menuTree.js` differs, change `MENU_ANCHOR` at the top of `zapret-gui.sh`.
 - Assumes the standard zapret layout: `/opt/zapret/config`, `/opt/zapret/init.d/sysv/zapret`, `/opt/zapret/ipset/zapret-hosts-user.txt`.
+- Firewall status uses `iptables -L` NFQUEUE detection for compatibility with AsusWRT builds where vendor targets can make `iptables -S` fail.
 - The *Install* and *Blockcheck* buttons are best‑effort/experimental (blockcheck is normally interactive).
 - Tested on RT‑BE92U (Merlin 3.0.0.6.102.8). Should work on other Merlin builds; open an issue if the menu doesn't appear.
 

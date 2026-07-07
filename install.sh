@@ -26,5 +26,6 @@ chmod 0755 "$DIR/zapret-gui.sh"
 
 echo
 echo "Done. Open the router web UI -> 'Network Tools' -> 'zapret' tab."
+echo "First run creates a starter hostlist with discord.com and an exclude list for Apple/OpenAI/Claude/Gemini domains."
 echo "Hard-refresh the browser (Ctrl/Cmd+Shift+R) so the menu reloads."
 echo "Uninstall any time with:  $DIR/zapret-gui.sh uninstall"
