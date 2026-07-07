@@ -29,6 +29,7 @@ ZAPRET_CONF="${ZAPRET_DIR}/config"
 HOSTLIST="${ZAPRET_DIR}/ipset/zapret-hosts-user.txt"
 HOSTLIST_EXCLUDE="${ZAPRET_DIR}/ipset/zapret-hosts-user-exclude.txt"
 BLOCKLOG="/tmp/zapret-blockcheck.log"
+BLOCKPID="/tmp/zapret-blockcheck.pid"
 SE="/jffs/scripts/service-event"
 SEE="/jffs/scripts/service-event-end"
 SS="/jffs/scripts/services-start"
@@ -39,6 +40,18 @@ TAG="# ${ADDON}"
 B64E()    { openssl base64 -A 2>/dev/null; }
 # base64url decode (rc_service names can't carry +/=)
 B64URL_D() { local b; b="$(echo "$1" | tr '_-' '/+')"; while [ $((${#b} % 4)) -ne 0 ]; do b="${b}="; done; echo "$b" | openssl base64 -d -A 2>/dev/null; }
+
+Blockcheck_Running() {
+	local p
+	[ -f "$BLOCKPID" ] || { echo 0; return; }
+	p="$(cat "$BLOCKPID" 2>/dev/null)"
+	if [ -n "$p" ] && kill -0 "$p" 2>/dev/null; then
+		echo 1
+	else
+		rm -f "$BLOCKPID"
+		echo 0
+	fi
+}
 
 Ensure_Default_Lists() {
 	[ -d "${ZAPRET_DIR}/ipset" ] || return 0
@@ -113,7 +126,7 @@ Unmount_UI() {
 
 ######## build the page from the template with live values #############
 Gen_Status() {
-	local page enabled running pid qcount rules mode ports stamp strat ttl installed log_b64 hostlist_ok exclude_ok host_count exclude_count mode_ok
+	local page enabled running pid qcount rules mode ports stamp strat ttl installed log_b64 hostlist_ok exclude_ok host_count exclude_count mode_ok bc_running
 	page="$(am_settings_get zapretgui_page)"; [ -z "$page" ] && return
 	[ -x "$ZAPRET_INIT" ] && installed=1 || installed=0
 	[ -s "$HOSTLIST" ] && hostlist_ok=1 || hostlist_ok=0
@@ -123,6 +136,7 @@ Gen_Status() {
 	enabled="$(grep -E '^NFQWS_ENABLE=' "$ZAPRET_CONF" 2>/dev/null | cut -d= -f2)"
 	mode="$(grep -E '^MODE_FILTER=' "$ZAPRET_CONF" 2>/dev/null | cut -d= -f2)"
 	[ "${mode:-hostlist}" = "hostlist" ] && mode_ok=1 || mode_ok=0
+	bc_running="$(Blockcheck_Running)"
 	ports="$(grep -E '^NFQWS_PORTS_TCP=' "$ZAPRET_CONF" 2>/dev/null | cut -d= -f2)"
 	strat="$(grep -oE 'dpi-desync=[a-z0-9,]+' "$ZAPRET_CONF" 2>/dev/null | head -1 | cut -d= -f2)"
 	ttl="$(grep -oE 'dpi-desync-ttl=[0-9]+' "$ZAPRET_CONF" 2>/dev/null | head -1 | cut -d= -f2)"
@@ -133,7 +147,7 @@ Gen_Status() {
 	# SKIPLOG are present.  The verbose listing still works and shows NFQUEUE.
 	rules="$(iptables -t mangle -L -n 2>/dev/null | grep -c 'NFQUEUE.*num 200')"
 	stamp="$(date '+%Y-%m-%d %H:%M:%S')"
-	log_b64="$( { echo '### nfqws:'; cat /proc/$(pidof nfqws 2>/dev/null|awk '{print $1}')/cmdline 2>/dev/null | tr '\0' ' '; echo; echo; echo '### last restart log:'; tail -20 /tmp/zapret_restart.log 2>/dev/null; echo; echo '### blockcheck:'; tail -40 "$BLOCKLOG" 2>/dev/null; } | B64E )"
+	log_b64="$( { echo '### nfqws:'; cat /proc/$(pidof nfqws 2>/dev/null|awk '{print $1}')/cmdline 2>/dev/null | tr '\0' ' '; echo; echo; echo '### last restart log:'; tail -20 /tmp/zapret_restart.log 2>/dev/null; echo; echo "### blockcheck (running=${bc_running}):"; tail -80 "$BLOCKLOG" 2>/dev/null; } | B64E )"
 	sed -e "s|@@ENABLED@@|${enabled:-0}|g" -e "s|@@RUNNING@@|${running}|g" \
 	    -e "s|@@PID@@|${pid:-}|g" -e "s|@@QCOUNT@@|${qcount}|g" -e "s|@@RULES@@|${rules}|g" \
 	    -e "s|@@MODE@@|${mode:-}|g" -e "s|@@PORTS@@|${ports:-}|g" -e "s|@@STAMP@@|${stamp}|g" \
@@ -142,6 +156,7 @@ Gen_Status() {
 	    -e "s|@@HOSTLIST_OK@@|${hostlist_ok}|g" -e "s|@@EXCLUDE_OK@@|${exclude_ok}|g" \
 	    -e "s|@@HOST_COUNT@@|${host_count}|g" -e "s|@@EXCLUDE_COUNT@@|${exclude_count}|g" \
 	    -e "s|@@MODE_OK@@|${mode_ok}|g" \
+	    -e "s|@@BC_RUNNING@@|${bc_running}|g" \
 	    -e "s|@@PAGE@@|${page}|g" \
 	    "$ASP_SRC" \
 	| awk -v hl="$HOSTLIST" '$0=="@@HOSTAREA@@"{print "<textarea id=\"f_hosts\" class=\"zg-hosts\" rows=\"9\" spellcheck=\"false\" oninput=\"upd_hc()\">"; while((getline l < hl)>0) print l; print "</textarea>"; next} {print}' \
@@ -196,9 +211,37 @@ Apply_Event_Cfg() {
 }
 
 Do_Blockcheck_Ev() {
-	local dom; dom="$(B64URL_D "$1" | sed -n 's/^bc=//p' | tr -cd 'a-zA-Z0-9.-')"; [ -z "$dom" ] && dom=rutracker.org
-	echo "blockcheck: $dom - $(date)" > "$BLOCKLOG"
-	( DOMAINS="$dom" BATCH=1 CURL_MAX_TIME=3 sh "${ZAPRET_DIR}/blockcheck.sh" >> "$BLOCKLOG" 2>&1; echo '### done ###' >> "$BLOCKLOG"; Gen_Status ) &
+	local dom bc_script
+	dom="$(B64URL_D "$1" | sed -n 's/^bc=//p' | tr -cd 'a-zA-Z0-9.-')"; [ -z "$dom" ] && dom=rutracker.org
+	bc_script="${ZAPRET_DIR}/blockcheck.sh"
+	if [ ! -f "$bc_script" ]; then
+		{ echo "blockcheck error: ${bc_script} not found"; echo "time: $(date)"; } > "$BLOCKLOG"
+		Gen_Status
+		return
+	fi
+	if [ "$(Blockcheck_Running)" = "1" ]; then
+		echo "blockcheck already running, ignoring duplicate request - $(date)" >> "$BLOCKLOG"
+		Gen_Status
+		return
+	fi
+	(
+		echo "### blockcheck started ###"
+		echo "domain: $dom"
+		echo "time: $(date)"
+		echo
+		cd "$ZAPRET_DIR" || exit 1
+		if command -v timeout >/dev/null 2>&1; then
+			DOMAINS="$dom" BATCH=1 CURL_MAX_TIME=5 timeout 180 sh ./blockcheck.sh
+		else
+			DOMAINS="$dom" BATCH=1 CURL_MAX_TIME=5 sh ./blockcheck.sh
+		fi
+		rc=$?
+		echo
+		echo "### blockcheck done: exit=${rc} time=$(date) ###"
+		rm -f "$BLOCKPID"
+		Gen_Status
+	) > "$BLOCKLOG" 2>&1 &
+	echo $! > "$BLOCKPID"
 	Gen_Status
 }
 

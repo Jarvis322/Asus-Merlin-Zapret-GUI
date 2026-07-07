@@ -26,7 +26,7 @@ var zapret_enabled='@@ENABLED@@', zapret_running='@@RUNNING@@', zapret_pid='@@PI
     zapret_ttl='@@TTL@@', zapret_installed='@@INSTALLED@@', zapret_log_b64='@@LOG_B64@@',
     zapret_hostlist_ok='@@HOSTLIST_OK@@', zapret_exclude_ok='@@EXCLUDE_OK@@',
     zapret_host_count='@@HOST_COUNT@@', zapret_exclude_count='@@EXCLUDE_COUNT@@',
-    zapret_mode_ok='@@MODE_OK@@';
+    zapret_mode_ok='@@MODE_OK@@', zapret_bc_running='@@BC_RUNNING@@';
 function $id(x){ return document.getElementById(x); }
 function yn(v){ return (v=='1')?'<span style="color:#66ff99;font-weight:700">&#10004; Evet</span>':'<span style="color:#ff8f8f;font-weight:700">&#10008; Hay&#305;r</span>'; }
 function wz(v, ok, bad){
@@ -49,6 +49,7 @@ function refresh_status(){
 	$id('st_qcount').innerHTML=zapret_qcount+' paket';
 	$id('st_mode').innerHTML=(zapret_mode||'-');
 	$id('st_ports').innerHTML=(zapret_ports||'-');
+	if($id('bc_status')) $id('bc_status').innerHTML=wz(zapret_bc_running,'blockcheck calisiyor','hazir');
 	var ok=(zapret_running=='1' && zapret_rules>0);
 	$id('st_overall').innerHTML=(ok?'<span style="color:#093;font-weight:bold;">&#9679; &Ccedil;ALI&#350;IYOR</span>':'<span style="color:#c33;font-weight:bold;">&#9679; DEVRE DI&#350;I / SORUNLU</span>')+'<span style="color:#aaa;font-size:11px;">&nbsp;&nbsp;(g&uuml;ncelleme: '+zapret_stamp+')</span>';
 }
@@ -116,13 +117,16 @@ function save_apply(){
 	})();
 }
 function run_blockcheck(){
-	post_action('restart_zgbc'+b64url('bc='+$id('f_bcdomain').value),5,0);
-	alert('Blockcheck arka planda başladı ('+$id('f_bcdomain').value+'). ~1-2 dk sonra "Yenile" ile aşağıdaki Log bölümünden sonucu görün.');
+	if(zapret_installed!='1'){ alert('Blockcheck icin once zapret kurulu olmali.'); return; }
+	if(zapret_bc_running=='1'){ alert('Blockcheck zaten calisiyor. Log bolumunden takip edip birazdan Yenile ile kontrol edin.'); return; }
+	post_action('restart_zgbc'+b64url('bc='+$id('f_bcdomain').value),5,8000);
+	alert('Blockcheck arka planda basladi ('+$id('f_bcdomain').value+'). Sayfa birazdan yenilenip calisma durumunu gosterecek.');
 }
 function wizard_test(){
 	if(zapret_installed!='1'){ alert('Testten once zapret kurulu olmali. Once Kur / Onerileni Uygula ile kurulumu baslatin.'); return; }
-	post_action('restart_zgbc'+b64url('bc=discord.com'),5,0);
-	alert('Hizli test arka planda başladı (discord.com). ~1-2 dk sonra Yenile ile Log bölümünden sonucu görün.');
+	if(zapret_bc_running=='1'){ alert('Blockcheck zaten calisiyor. Log bolumunden takip edip birazdan Yenile ile kontrol edin.'); return; }
+	post_action('restart_zgbc'+b64url('bc=discord.com'),5,8000);
+	alert('Hizli test arka planda basladi (discord.com). Sayfa birazdan yenilenip calisma durumunu gosterecek.');
 }
 function wizard_recommended(){
 	if(zapret_installed!='1'){ do_install(); return; }
@@ -293,6 +297,7 @@ function do_install(){
 <div class="zg-card">
 <div class="zg-card-title">Ara&ccedil;lar</div>
 <table class="zg-table">
+<tr><th width="40%">Blockcheck durumu</th><td id="bc_status">-</td></tr>
 <tr><th width="40%">Blockcheck test domaini</th><td>
 <input type="text" id="f_bcdomain" class="zg-input" value="rutracker.org">
 <input class="zg-btn" onclick="run_blockcheck();" type="button" value="Blockcheck &ccedil;al&#305;&#351;t&#305;r">
