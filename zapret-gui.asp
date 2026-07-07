@@ -23,15 +23,22 @@
 var zapret_enabled='@@ENABLED@@', zapret_running='@@RUNNING@@', zapret_pid='@@PID@@',
     zapret_qcount='@@QCOUNT@@', zapret_rules='@@RULES@@', zapret_mode='@@MODE@@',
     zapret_ports='@@PORTS@@', zapret_stamp='@@STAMP@@', zapret_strat='@@STRAT@@',
-    zapret_ttl='@@TTL@@', zapret_installed='@@INSTALLED@@', zapret_log_b64='@@LOG_B64@@';
+    zapret_ttl='@@TTL@@', zapret_installed='@@INSTALLED@@', zapret_log_b64='@@LOG_B64@@',
+    zapret_hostlist_ok='@@HOSTLIST_OK@@', zapret_exclude_ok='@@EXCLUDE_OK@@',
+    zapret_host_count='@@HOST_COUNT@@', zapret_exclude_count='@@EXCLUDE_COUNT@@',
+    zapret_mode_ok='@@MODE_OK@@';
 function $id(x){ return document.getElementById(x); }
 function yn(v){ return (v=='1')?'<span style="color:#66ff99;font-weight:700">&#10004; Evet</span>':'<span style="color:#ff8f8f;font-weight:700">&#10008; Hay&#305;r</span>'; }
+function wz(v, ok, bad){
+	return (v=='1')?'<span class="zg-ok">&#10004; '+ok+'</span>':'<span class="zg-bad">&#10008; '+bad+'</span>';
+}
 function setSel(id,val){ var s=$id(id); if(!s)return; for(var i=0;i<s.options.length;i++){ if(s.options[i].value==val){ s.selectedIndex=i; return; } } }
 function initial(){
 	var pg=location.pathname.replace(/^\//,'');
 	try{ document.form.current_page.value=pg; document.form.next_page.value=pg; }catch(e){}
 	try{ show_menu(); }catch(e){}
 	try{ refresh_status(); }catch(e){}
+	try{ refresh_wizard(); }catch(e){}
 	try{ fill_form(); }catch(e){}
 }
 function refresh_status(){
@@ -44,6 +51,20 @@ function refresh_status(){
 	$id('st_ports').innerHTML=(zapret_ports||'-');
 	var ok=(zapret_running=='1' && zapret_rules>0);
 	$id('st_overall').innerHTML=(ok?'<span style="color:#093;font-weight:bold;">&#9679; &Ccedil;ALI&#350;IYOR</span>':'<span style="color:#c33;font-weight:bold;">&#9679; DEVRE DI&#350;I / SORUNLU</span>')+'<span style="color:#aaa;font-size:11px;">&nbsp;&nbsp;(g&uuml;ncelleme: '+zapret_stamp+')</span>';
+}
+function refresh_wizard(){
+	$id('wz_installed').innerHTML=wz(zapret_installed,'zapret bulundu','zapret kurulu degil');
+	$id('wz_hostlist').innerHTML=wz(zapret_hostlist_ok,'hostlist hazir ('+zapret_host_count+' domain)','hostlist yok veya bos');
+	$id('wz_exclude').innerHTML=wz(zapret_exclude_ok,'exclude list hazir ('+zapret_exclude_count+' domain)','exclude list yok veya bos');
+	$id('wz_mode').innerHTML=wz(zapret_mode_ok,'onerilen mod aktif: hostlist','onerilen mod: hostlist');
+	$id('wz_start').innerHTML=wz((zapret_running=='1' && zapret_rules>0)?'1':'0','servis calisiyor','servis henuz aktif degil');
+	if(zapret_installed!='1'){
+		$id('wz_hint').innerHTML='Once zapret kurulumunu tamamlayin, sonra test edip baslatin.';
+	}else if(zapret_running=='1' && zapret_rules>0){
+		$id('wz_hint').innerHTML='Kurulum tamam. Degisikliklerden sonra Yenile ile durumu tekrar kontrol edebilirsiniz.';
+	}else{
+		$id('wz_hint').innerHTML='Hazir gorunuyor. Test et veya Baslat ile devam edin.';
+	}
 }
 var _filled=false;
 function fill_form(){
@@ -98,6 +119,21 @@ function run_blockcheck(){
 	post_action('restart_zgbc'+b64url('bc='+$id('f_bcdomain').value),5,0);
 	alert('Blockcheck arka planda başladı ('+$id('f_bcdomain').value+'). ~1-2 dk sonra "Yenile" ile aşağıdaki Log bölümünden sonucu görün.');
 }
+function wizard_test(){
+	if(zapret_installed!='1'){ alert('Testten once zapret kurulu olmali. Once Kur / Onerileni Uygula ile kurulumu baslatin.'); return; }
+	post_action('restart_zgbc'+b64url('bc=discord.com'),5,0);
+	alert('Hizli test arka planda başladı (discord.com). ~1-2 dk sonra Yenile ile Log bölümünden sonucu görün.');
+}
+function wizard_recommended(){
+	if(zapret_installed!='1'){ do_install(); return; }
+	if($id('f_mode')) setSel('f_mode','hostlist');
+	if($id('f_enable')) $id('f_enable').checked=true;
+	save_apply();
+}
+function wizard_start(){
+	if(zapret_installed!='1'){ do_install(); return; }
+	do_action('zapreton');
+}
 function do_install(){
 	if(!confirm('zapret indirilip kurulsun mu? (DENEYSEL - internet gerekir)')) return;
 	post_action('restart_zapretinstall',5,0);
@@ -127,7 +163,15 @@ function do_install(){
 .zg-meta{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:7px;color:#cdd7da;font-size:12px;}
 .zg-hint{color:#aebcc0;}
 .zg-log{background:#111b1d;color:#8dff8d;padding:10px;border-radius:6px;height:200px;overflow:auto;font-size:11px;white-space:pre-wrap;border:1px solid rgba(255,255,255,.1);}
+.zg-wizard{padding:14px;}
+.zg-wizard-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;margin-bottom:12px;}
+.zg-step{padding:10px;border-radius:7px;background:rgba(0,0,0,.16);border:1px solid rgba(255,255,255,.08);min-height:44px;}
+.zg-step-label{display:block;color:#aebcc0;font-size:11px;margin-bottom:4px;}
+.zg-ok{color:#66ff99;font-weight:700;}
+.zg-bad{color:#ff8f8f;font-weight:700;}
+.zg-wizard-foot{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;}
 @media(max-width:760px){.zg-head{display:block}.zg-overall{display:inline-block;margin-top:10px}.zg-table th,.zg-table td{display:block;width:auto}.zg-actions{justify-content:stretch}.zg-btn{flex:1 1 45%;}}
+@media(max-width:760px){.zg-wizard-grid{grid-template-columns:1fr;}}
 </style>
 </head>
 <body onload="initial();" class="bg">
@@ -156,6 +200,29 @@ function do_install(){
 <tr><td bgcolor="#4D595D" valign="top"><div>&nbsp;</div>
 <div class="zg-wrap">
 <div class="zg-head"><div class="zg-title">zapret &mdash; DPI Bypass <span class="zg-version">v1.0</span></div><div id="st_overall" class="zg-overall">&#8230;</div></div>
+
+<!-- SETUP WIZARD -->
+<div class="zg-card" id="wizard_panel">
+<div class="zg-card-title">Kurulum Kontrol&uuml;</div>
+<div class="zg-wizard">
+<div class="zg-wizard-grid">
+<div class="zg-step"><span class="zg-step-label">1. zapret</span><span id="wz_installed">-</span></div>
+<div class="zg-step"><span class="zg-step-label">2. Hostlist</span><span id="wz_hostlist">-</span></div>
+<div class="zg-step"><span class="zg-step-label">3. Exclude list</span><span id="wz_exclude">-</span></div>
+<div class="zg-step"><span class="zg-step-label">4. Onerilen mod</span><span id="wz_mode">-</span></div>
+<div class="zg-step"><span class="zg-step-label">5. Test / baslat</span><span id="wz_start">-</span></div>
+</div>
+<div class="zg-wizard-foot">
+<span id="wz_hint" class="zg-hint">Kontrol ediliyor...</span>
+<span class="zg-actions" style="margin:0;">
+<input class="zg-btn" onclick="wizard_recommended();" type="button" value="Kur / Onerileni Uygula">
+<input class="zg-btn" onclick="wizard_test();" type="button" value="Test Et">
+<input class="zg-btn zg-btn-save" onclick="wizard_start();" type="button" value="Baslat">
+<input class="zg-btn" onclick="location.reload();" type="button" value="Yenile">
+</span>
+</div>
+</div>
+</div>
 
 <!-- INSTALL PANEL (only if zapret is not installed) -->
 <div id="install_panel" style="display:none;">
@@ -247,6 +314,6 @@ function do_install(){
 </tr></table>
 </form>
 <div id="footer"></div>
-<script type="text/javascript">try{ refresh_status(); fill_form(); }catch(e){}</script>
+<script type="text/javascript">try{ refresh_status(); refresh_wizard(); fill_form(); }catch(e){}</script>
 </body>
 </html>

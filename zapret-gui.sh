@@ -113,11 +113,16 @@ Unmount_UI() {
 
 ######## build the page from the template with live values #############
 Gen_Status() {
-	local page enabled running pid qcount rules mode ports stamp strat ttl installed log_b64
+	local page enabled running pid qcount rules mode ports stamp strat ttl installed log_b64 hostlist_ok exclude_ok host_count exclude_count mode_ok
 	page="$(am_settings_get zapretgui_page)"; [ -z "$page" ] && return
 	[ -x "$ZAPRET_INIT" ] && installed=1 || installed=0
+	[ -s "$HOSTLIST" ] && hostlist_ok=1 || hostlist_ok=0
+	[ -s "$HOSTLIST_EXCLUDE" ] && exclude_ok=1 || exclude_ok=0
+	host_count="$(grep -vE '^[[:space:]]*($|#)' "$HOSTLIST" 2>/dev/null | wc -l | tr -d ' ')"; [ -z "$host_count" ] && host_count=0
+	exclude_count="$(grep -vE '^[[:space:]]*($|#)' "$HOSTLIST_EXCLUDE" 2>/dev/null | wc -l | tr -d ' ')"; [ -z "$exclude_count" ] && exclude_count=0
 	enabled="$(grep -E '^NFQWS_ENABLE=' "$ZAPRET_CONF" 2>/dev/null | cut -d= -f2)"
 	mode="$(grep -E '^MODE_FILTER=' "$ZAPRET_CONF" 2>/dev/null | cut -d= -f2)"
+	[ "${mode:-hostlist}" = "hostlist" ] && mode_ok=1 || mode_ok=0
 	ports="$(grep -E '^NFQWS_PORTS_TCP=' "$ZAPRET_CONF" 2>/dev/null | cut -d= -f2)"
 	strat="$(grep -oE 'dpi-desync=[a-z0-9,]+' "$ZAPRET_CONF" 2>/dev/null | head -1 | cut -d= -f2)"
 	ttl="$(grep -oE 'dpi-desync-ttl=[0-9]+' "$ZAPRET_CONF" 2>/dev/null | head -1 | cut -d= -f2)"
@@ -134,6 +139,9 @@ Gen_Status() {
 	    -e "s|@@MODE@@|${mode:-}|g" -e "s|@@PORTS@@|${ports:-}|g" -e "s|@@STAMP@@|${stamp}|g" \
 	    -e "s|@@STRAT@@|${strat:-fake}|g" -e "s|@@TTL@@|${ttl:-2}|g" \
 	    -e "s|@@INSTALLED@@|${installed}|g" -e "s|@@LOG_B64@@|${log_b64}|g" \
+	    -e "s|@@HOSTLIST_OK@@|${hostlist_ok}|g" -e "s|@@EXCLUDE_OK@@|${exclude_ok}|g" \
+	    -e "s|@@HOST_COUNT@@|${host_count}|g" -e "s|@@EXCLUDE_COUNT@@|${exclude_count}|g" \
+	    -e "s|@@MODE_OK@@|${mode_ok}|g" \
 	    -e "s|@@PAGE@@|${page}|g" \
 	    "$ASP_SRC" \
 	| awk -v hl="$HOSTLIST" '$0=="@@HOSTAREA@@"{print "<textarea id=\"f_hosts\" class=\"zg-hosts\" rows=\"9\" spellcheck=\"false\" oninput=\"upd_hc()\">"; while((getline l < hl)>0) print l; print "</textarea>"; next} {print}' \

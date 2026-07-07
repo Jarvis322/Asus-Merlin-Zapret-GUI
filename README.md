@@ -15,6 +15,7 @@ It adds a **zapret** tab under **Network Tools** with live status, one‑click c
 - **Editable settings** — desync strategy (`fake`, `fakedsplit`, `fakeddisorder`, `disorder2`, `split2`, `multisplit`), TTL, TCP ports, filter mode (`hostlist` / `autohostlist` / `all`)
 - **Hostlist editor** — edit the user hostlist in a textarea with a live line counter; works for lists of any size (auto‑chunked)
 - **Safe defaults** — first install creates `discord.com` as the starter hostlist and an exclude list for Apple, ChatGPT/OpenAI, Claude/Anthropic, Gemini/Google and common Cloudflare auth/CDN hosts
+- **First-run setup wizard** — checks zapret, hostlist, exclude list, recommended `hostlist` mode and service readiness with quick actions to install, test and start
 - **Blockcheck** runner (background) + **log viewer**
 - **Optional installer** — a button to download zapret if it isn't installed yet (experimental)
 - Config is **backed up** to `config.bak-gui` on every apply
@@ -36,6 +37,14 @@ curl -fsSL https://raw.githubusercontent.com/Jarvis322/Asus-Merlin-Zapret-GUI/ma
 ```
 
 Then open the router web UI → **Network Tools → zapret** and **hard‑refresh** the browser (Ctrl/Cmd + Shift + R) so the menu reloads.
+
+On first open, the **Kurulum Kontrolü** card walks through the basic setup:
+
+1. Checks whether zapret is installed.
+2. Checks whether the starter hostlist exists.
+3. Checks whether the exclude list exists.
+4. Recommends `hostlist` mode.
+5. Offers quick actions to install/apply recommended settings, run a `discord.com` blockcheck and start zapret.
 
 ### Manual install
 
