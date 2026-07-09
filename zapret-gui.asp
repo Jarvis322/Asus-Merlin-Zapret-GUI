@@ -271,7 +271,7 @@ function do_install(){
 <option value="disorder2">disorder2</option>
 <option value="split2">split2</option>
 <option value="multisplit">multisplit</option>
-<option value="superonline">Superonline TR (fake+md5sig)</option>
+<option value="superonline">Superonline Discord (onerilen)</option>
 <option value="custom">custom (blockcheck sonucu / elle)</option>
 </select></td></tr>
 <tr><th>&Ouml;zel strateji<br><small>(sadece "custom" se&ccedil;ilince kullan&#305;l&#305;r)</small></th><td><input type="text" id="f_custom" class="zg-input" style="width:100%" maxlength="300" value="@@CUSTOM@@" placeholder="--dpi-desync=fake --dpi-desync-fooling=md5sig --dpi-desync-ttl=6"></td></tr>
