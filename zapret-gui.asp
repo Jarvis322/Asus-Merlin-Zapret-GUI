@@ -103,6 +103,7 @@ function save_apply(){
 	var tv=$id('f_hosts').value.replace(/\r/g,'').replace(/\n+$/,'');
 	var blob='enable='+($id('f_enable').checked?'1':'0')+'\nstrat='+$id('f_strat').value
 	  +'\nttl='+$id('f_ttl').value+'\nports='+$id('f_ports').value+'\nmode='+$id('f_mode').value
+	  +'\ncustom='+($id('f_custom')?$id('f_custom').value:'')
 	  +'\nhosts='+tv.split('\n').join('~');
 	var b=b64url(blob), chunks=[];
 	for(var i=0;i<b.length;i+=100) chunks.push(b.substr(i,100));
@@ -271,7 +272,9 @@ function do_install(){
 <option value="split2">split2</option>
 <option value="multisplit">multisplit</option>
 <option value="superonline">Superonline TR (fake+md5sig)</option>
+<option value="custom">custom (blockcheck sonucu / elle)</option>
 </select></td></tr>
+<tr><th>&Ouml;zel strateji<br><small>(sadece "custom" se&ccedil;ilince kullan&#305;l&#305;r)</small></th><td><input type="text" id="f_custom" class="zg-input" style="width:100%" maxlength="300" value="@@CUSTOM@@" placeholder="--dpi-desync=fake --dpi-desync-fooling=md5sig --dpi-desync-ttl=6"></td></tr>
 <tr><th>TTL (fake i&ccedil;in)</th><td><input type="text" id="f_ttl" class="zg-input" maxlength="3" value="2"></td></tr>
 <tr><th>Portlar (TCP, virg&uuml;lle)</th><td><input type="text" id="f_ports" class="zg-input" maxlength="64" value="80,443"></td></tr>
 <tr><th>Mod</th><td><select id="f_mode" class="zg-select">

@@ -126,7 +126,7 @@ Unmount_UI() {
 
 ######## build the page from the template with live values #############
 Gen_Status() {
-	local page enabled running pid qcount rules mode ports stamp strat ttl installed log_b64 hostlist_ok exclude_ok host_count exclude_count mode_ok bc_running
+	local page enabled running pid qcount rules mode ports stamp strat ttl installed log_b64 hostlist_ok exclude_ok host_count exclude_count mode_ok bc_running custom_now
 	page="$(am_settings_get zapretgui_page)"; [ -z "$page" ] && return
 	[ -x "$ZAPRET_INIT" ] && installed=1 || installed=0
 	[ -s "$HOSTLIST" ] && hostlist_ok=1 || hostlist_ok=0
@@ -145,6 +145,8 @@ Gen_Status() {
 	else
 		strat="$(grep -oE 'dpi-desync=[a-z0-9,]+' "$ZAPRET_CONF" 2>/dev/null | head -1 | cut -d= -f2)"
 	fi
+	# current raw 443 desync options, used to prefill the "custom" field (round-trip)
+	custom_now="$(awk -F'--filter-tcp=443 ' '/--filter-tcp=443 /{sub(/ *(<HOSTLIST>|--new).*/,"",$2); print $2; exit}' "$ZAPRET_CONF" 2>/dev/null)"
 	ttl="$(grep -oE 'dpi-desync-ttl=[0-9]+' "$ZAPRET_CONF" 2>/dev/null | head -1 | cut -d= -f2)"
 	pid="$(pidof nfqws 2>/dev/null | awk '{print $1}')"
 	[ -n "$pid" ] && running=1 || running=0
@@ -163,6 +165,7 @@ Gen_Status() {
 	    -e "s|@@HOST_COUNT@@|${host_count}|g" -e "s|@@EXCLUDE_COUNT@@|${exclude_count}|g" \
 	    -e "s|@@MODE_OK@@|${mode_ok}|g" \
 	    -e "s|@@BC_RUNNING@@|${bc_running}|g" \
+	    -e "s|@@CUSTOM@@|${custom_now}|g" \
 	    -e "s|@@PAGE@@|${page}|g" \
 	    "$ASP_SRC" \
 	| awk -v hl="$HOSTLIST" '$0=="@@HOSTAREA@@"{print "<textarea id=\"f_hosts\" class=\"zg-hosts\" rows=\"9\" spellcheck=\"false\" oninput=\"upd_hc()\">"; while((getline l < hl)>0) print l; print "</textarea>"; next} {print}' \
@@ -189,7 +192,7 @@ Strat_Line() {  # $1=strategy $2=ttl
 
 ######## apply settings decoded from the event blob ####################
 Apply_Event_Cfg() {
-	local dec en strat ttl ports mode hosts_raw sline p oi
+	local dec en strat ttl ports mode hosts_raw sline p oi custom
 	dec="$(B64URL_D "$1")"
 	[ -z "$dec" ] && { logger -t "$ADDON" "event cfg decode failed"; return 1; }
 	en="$(echo "$dec" | sed -n 's/^enable=//p')"; [ "$en" = "1" ] || en=0
@@ -199,6 +202,10 @@ Apply_Event_Cfg() {
 	mode="$(echo "$dec" | sed -n 's/^mode=//p' | tr -cd 'a-z')"
 	# GUI "all" = process every connection; zapret's config value for that is "none"
 	case "$mode" in hostlist|autohostlist|none) ;; all) mode=none ;; *) mode=hostlist ;; esac
+	# raw custom strategy (used only when strat=custom). Allow the nfqws option
+	# charset and strip shell metacharacters ("$`;\ etc.) so it can never break
+	# out of the double-quoted NFQWS_OPT="" it gets written into.
+	custom="$(echo "$dec" | sed -n 's/^custom=//p' | tr -cd 'A-Za-z0-9 =,.:+/-')"
 	hosts_raw="$(echo "$dec" | sed -n 's/^hosts=//p')"
 	[ -f "$ZAPRET_CONF" ] || return 1
 	cp -f "$ZAPRET_CONF" "${ZAPRET_CONF}.bak-gui"
@@ -217,6 +224,11 @@ Apply_Event_Cfg() {
 			echo "--filter-tcp=443 --dpi-desync=fake --dpi-desync-fooling=md5sig --dpi-desync-ttl=6 <HOSTLIST> --new"
 			echo "\""
 		} > /tmp/zg_opt
+	elif [ "$strat" = "custom" ]; then
+		# user-supplied raw desync options, e.g. pasted straight from a blockcheck
+		# result for their own ISP. Falls back to plain fake if left empty.
+		[ -z "$custom" ] && custom="--dpi-desync=fake --dpi-desync-ttl=$ttl"
+		{ echo "NFQWS_OPT=\""; oi="$IFS"; IFS=','; for p in $ports; do echo "--filter-tcp=$p $custom <HOSTLIST> --new"; done; IFS="$oi"; echo "\""; } > /tmp/zg_opt
 	else
 		{ echo "NFQWS_OPT=\""; oi="$IFS"; IFS=','; for p in $ports; do echo "--filter-tcp=$p $sline <HOSTLIST> --new"; done; IFS="$oi"; echo "\""; } > /tmp/zg_opt
 	fi
