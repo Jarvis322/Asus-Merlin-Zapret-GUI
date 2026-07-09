@@ -270,6 +270,7 @@ function do_install(){
 <option value="disorder2">disorder2</option>
 <option value="split2">split2</option>
 <option value="multisplit">multisplit</option>
+<option value="superonline">Superonline TR (fake+md5sig)</option>
 </select></td></tr>
 <tr><th>TTL (fake i&ccedil;in)</th><td><input type="text" id="f_ttl" class="zg-input" maxlength="3" value="2"></td></tr>
 <tr><th>Portlar (TCP, virg&uuml;lle)</th><td><input type="text" id="f_ports" class="zg-input" maxlength="64" value="80,443"></td></tr>

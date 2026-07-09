@@ -135,10 +135,16 @@ Gen_Status() {
 	exclude_count="$(grep -vE '^[[:space:]]*($|#)' "$HOSTLIST_EXCLUDE" 2>/dev/null | wc -l | tr -d ' ')"; [ -z "$exclude_count" ] && exclude_count=0
 	enabled="$(grep -E '^NFQWS_ENABLE=' "$ZAPRET_CONF" 2>/dev/null | cut -d= -f2)"
 	mode="$(grep -E '^MODE_FILTER=' "$ZAPRET_CONF" 2>/dev/null | cut -d= -f2)"
+	# zapret stores "none" for process-everything; the GUI exposes it as "all"
+	[ "$mode" = "none" ] && mode="all"
 	[ "${mode:-hostlist}" = "hostlist" ] && mode_ok=1 || mode_ok=0
 	bc_running="$(Blockcheck_Running)"
 	ports="$(grep -E '^NFQWS_PORTS_TCP=' "$ZAPRET_CONF" 2>/dev/null | cut -d= -f2)"
-	strat="$(grep -oE 'dpi-desync=[a-z0-9,]+' "$ZAPRET_CONF" 2>/dev/null | head -1 | cut -d= -f2)"
+	if grep -q -- '--dpi-desync=fake --dpi-desync-fooling=md5sig' "$ZAPRET_CONF" 2>/dev/null; then
+		strat="superonline"
+	else
+		strat="$(grep -oE 'dpi-desync=[a-z0-9,]+' "$ZAPRET_CONF" 2>/dev/null | head -1 | cut -d= -f2)"
+	fi
 	ttl="$(grep -oE 'dpi-desync-ttl=[0-9]+' "$ZAPRET_CONF" 2>/dev/null | head -1 | cut -d= -f2)"
 	pid="$(pidof nfqws 2>/dev/null | awk '{print $1}')"
 	[ -n "$pid" ] && running=1 || running=0
@@ -176,6 +182,7 @@ Strat_Line() {  # $1=strategy $2=ttl
 		disorder2)     echo "--dpi-desync=disorder2" ;;
 		split2)        echo "--dpi-desync=split2" ;;
 		multisplit)    echo "--dpi-desync=multisplit" ;;
+		superonline)   echo "SUPERONLINE_PROFILE" ;;
 		*)             echo "--dpi-desync=fake --dpi-desync-ttl=$2" ;;
 	esac
 }
@@ -189,7 +196,9 @@ Apply_Event_Cfg() {
 	strat="$(echo "$dec" | sed -n 's/^strat=//p' | tr -cd 'a-z0-9')"
 	ttl="$(echo "$dec" | sed -n 's/^ttl=//p' | tr -cd '0-9')"; [ -z "$ttl" ] && ttl=2
 	ports="$(echo "$dec" | sed -n 's/^ports=//p' | tr -cd '0-9,')"; [ -z "$ports" ] && ports=80,443
-	mode="$(echo "$dec" | sed -n 's/^mode=//p' | tr -cd 'a-z')"; case "$mode" in hostlist|autohostlist|all) ;; *) mode=hostlist ;; esac
+	mode="$(echo "$dec" | sed -n 's/^mode=//p' | tr -cd 'a-z')"
+	# GUI "all" = process every connection; zapret's config value for that is "none"
+	case "$mode" in hostlist|autohostlist|none) ;; all) mode=none ;; *) mode=hostlist ;; esac
 	hosts_raw="$(echo "$dec" | sed -n 's/^hosts=//p')"
 	[ -f "$ZAPRET_CONF" ] || return 1
 	cp -f "$ZAPRET_CONF" "${ZAPRET_CONF}.bak-gui"
@@ -197,7 +206,20 @@ Apply_Event_Cfg() {
 	sed -i "s/^NFQWS_PORTS_TCP=.*/NFQWS_PORTS_TCP=$ports/" "$ZAPRET_CONF"
 	sed -i "s/^MODE_FILTER=.*/MODE_FILTER=$mode/"         "$ZAPRET_CONF"
 	sline="$(Strat_Line "$strat" "$ttl")"
-	{ echo "NFQWS_OPT=\""; oi="$IFS"; IFS=','; for p in $ports; do echo "--filter-tcp=$p $sline <HOSTLIST> --new"; done; IFS="$oi"; echo "\""; } > /tmp/zg_opt
+	if [ "$strat" = "superonline" ]; then
+		# Superonline (TR) DPI is defeated by fake + md5sig fooling; opens every
+		# blocked site (verified: pornhub/xvideos/xnxx/xhamster/redtube/discord).
+		ports="80,443"
+		sed -i "s/^NFQWS_PORTS_TCP=.*/NFQWS_PORTS_TCP=$ports/" "$ZAPRET_CONF"
+		{
+			echo "NFQWS_OPT=\""
+			echo "--filter-tcp=80 --dpi-desync=fake --dpi-desync-fooling=md5sig --dpi-desync-ttl=6 <HOSTLIST> --new"
+			echo "--filter-tcp=443 --dpi-desync=fake --dpi-desync-fooling=md5sig --dpi-desync-ttl=6 <HOSTLIST> --new"
+			echo "\""
+		} > /tmp/zg_opt
+	else
+		{ echo "NFQWS_OPT=\""; oi="$IFS"; IFS=','; for p in $ports; do echo "--filter-tcp=$p $sline <HOSTLIST> --new"; done; IFS="$oi"; echo "\""; } > /tmp/zg_opt
+	fi
 	awk 'BEGIN{while((getline l < "/tmp/zg_opt")>0) buf=buf l "\n"} /^NFQWS_OPT=/{printf "%s", buf; skip=1; next} skip==1{ if($0=="\"") skip=0; next } {print}' "$ZAPRET_CONF" > "${ZAPRET_CONF}.new" && mv "${ZAPRET_CONF}.new" "$ZAPRET_CONF"
 	rm -f /tmp/zg_opt
 	if [ -n "$hosts_raw" ]; then
@@ -208,6 +230,28 @@ Apply_Event_Cfg() {
 	if [ "$en" = "1" ]; then "$ZAPRET_INIT" restart >/dev/null 2>&1; else "$ZAPRET_INIT" stop >/dev/null 2>&1; fi
 	logger -t "$ADDON" "applied: en=$en strat=$strat ttl=$ttl ports=$ports mode=$mode hostlist_chars=${#hosts_raw}"
 	Gen_Status
+}
+
+# Remove every trace of a blockcheck run: its helper nfqws + the iptables chains
+# it inserts. blockcheck redirects the test IP to its own NFQUEUE *without*
+# --queue-bypass, so if the run is interrupted/killed those chains keep DROPping
+# all traffic to that IP (this is what makes a site look "IP-blocked"). Idempotent.
+# Only touches blockcheck's own nfqws (qnum 59780 / fwmark 0x10000000) and the
+# blockcheck_* chains, so the main zapret daemon (qnum 200) is never affected.
+Cleanup_Blockcheck() {
+	kill $(ps w | grep '[b]lockcheck.sh' | awk '{print $1}') 2>/dev/null
+	kill $(ps w | grep '[n]fqws' | grep -E 'qnum=59780|0x10000000' | awk '{print $1}') 2>/dev/null
+	for tbl in filter mangle nat raw; do
+		iptables  -t "$tbl" -D INPUT   -j blockcheck_input  2>/dev/null
+		iptables  -t "$tbl" -D OUTPUT  -j blockcheck_output 2>/dev/null
+		iptables  -t "$tbl" -D FORWARD -j blockcheck_input  2>/dev/null
+		ip6tables -t "$tbl" -D INPUT   -j blockcheck_input  2>/dev/null
+		ip6tables -t "$tbl" -D OUTPUT  -j blockcheck_output 2>/dev/null
+		for ch in blockcheck_input blockcheck_output; do
+			iptables  -t "$tbl" -F "$ch" 2>/dev/null; iptables  -t "$tbl" -X "$ch" 2>/dev/null
+			ip6tables -t "$tbl" -F "$ch" 2>/dev/null; ip6tables -t "$tbl" -X "$ch" 2>/dev/null
+		done
+	done
 }
 
 Do_Blockcheck_Ev() {
@@ -224,6 +268,7 @@ Do_Blockcheck_Ev() {
 		Gen_Status
 		return
 	fi
+	Cleanup_Blockcheck   # clear leftover chains/nfqws from a previous crashed run
 	(
 		echo "### blockcheck started ###"
 		echo "domain: $dom"
@@ -238,10 +283,22 @@ Do_Blockcheck_Ev() {
 		rc=$?
 		echo
 		echo "### blockcheck done: exit=${rc} time=$(date) ###"
+		Cleanup_Blockcheck   # always remove blockcheck's DROP chains + helper nfqws
 		rm -f "$BLOCKPID"
 		Gen_Status
 	) > "$BLOCKLOG" 2>&1 &
 	echo $! > "$BLOCKPID"
+	# Watchdog: `timeout` is absent on busybox, so a hung blockcheck could otherwise
+	# leave its DROP chains up forever (and Blockcheck_Running would block retries).
+	# Force cleanup after ~4 min if the run is still alive.
+	(
+		bcpid="$(cat "$BLOCKPID" 2>/dev/null)"; i=0
+		while [ "$i" -lt 240 ]; do kill -0 "$bcpid" 2>/dev/null || exit 0; sleep 5; i=$((i+5)); done
+		Cleanup_Blockcheck
+		rm -f "$BLOCKPID"
+		echo '### watchdog: blockcheck timed out, cleaned up ###' >> "$BLOCKLOG"
+		Gen_Status
+	) &
 	Gen_Status
 }
 
