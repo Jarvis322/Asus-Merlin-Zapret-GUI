@@ -49,7 +49,7 @@ function refresh_status(){
 	$id('st_qcount').innerHTML=zapret_qcount+' paket';
 	$id('st_mode').innerHTML=(zapret_mode||'-');
 	$id('st_ports').innerHTML=(zapret_ports||'-');
-	if($id('bc_status')) $id('bc_status').innerHTML=wz(zapret_bc_running,'blockcheck calisiyor','hazir');
+	if($id('bc_status')) $id('bc_status').innerHTML=(zapret_bc_running=='1'?'&#9203; calisiyor':'<span style="color:#888;">hazir (bosta)</span>');
 	var ok=(zapret_running=='1' && zapret_rules>0);
 	$id('st_overall').innerHTML=(ok?'<span style="color:#093;font-weight:bold;">&#9679; &Ccedil;ALI&#350;IYOR</span>':'<span style="color:#c33;font-weight:bold;">&#9679; DEVRE DI&#350;I / SORUNLU</span>')+'<span style="color:#aaa;font-size:11px;">&nbsp;&nbsp;(g&uuml;ncelleme: '+zapret_stamp+')</span>';
 }
@@ -57,7 +57,7 @@ function refresh_wizard(){
 	$id('wz_installed').innerHTML=wz(zapret_installed,'zapret bulundu','zapret kurulu degil');
 	$id('wz_hostlist').innerHTML=wz(zapret_hostlist_ok,'hostlist hazir ('+zapret_host_count+' domain)','hostlist yok veya bos');
 	$id('wz_exclude').innerHTML=wz(zapret_exclude_ok,'exclude list hazir ('+zapret_exclude_count+' domain)','exclude list yok veya bos');
-	$id('wz_mode').innerHTML=wz(zapret_mode_ok,'onerilen mod aktif: hostlist','onerilen mod: hostlist');
+	$id('wz_mode').innerHTML=wz(zapret_mode_ok,'mod aktif: '+(zapret_mode||'-'),'mod ayarli degil');
 	$id('wz_start').innerHTML=wz((zapret_running=='1' && zapret_rules>0)?'1':'0','servis calisiyor','servis henuz aktif degil');
 	if(zapret_installed!='1'){
 		$id('wz_hint').innerHTML='Once zapret kurulumunu tamamlayin, sonra test edip baslatin.';
@@ -217,7 +217,7 @@ function do_install(){
 <div class="zg-step"><span class="zg-step-label">1. zapret</span><span id="wz_installed">-</span></div>
 <div class="zg-step"><span class="zg-step-label">2. Hostlist</span><span id="wz_hostlist">-</span></div>
 <div class="zg-step"><span class="zg-step-label">3. Exclude list</span><span id="wz_exclude">-</span></div>
-<div class="zg-step"><span class="zg-step-label">4. Onerilen mod</span><span id="wz_mode">-</span></div>
+<div class="zg-step"><span class="zg-step-label">4. Mod</span><span id="wz_mode">-</span></div>
 <div class="zg-step"><span class="zg-step-label">5. Test / baslat</span><span id="wz_start">-</span></div>
 </div>
 <div class="zg-wizard-foot">

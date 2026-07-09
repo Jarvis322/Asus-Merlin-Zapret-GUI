@@ -137,7 +137,8 @@ Gen_Status() {
 	mode="$(grep -E '^MODE_FILTER=' "$ZAPRET_CONF" 2>/dev/null | cut -d= -f2)"
 	# zapret stores "none" for process-everything; the GUI exposes it as "all"
 	[ "$mode" = "none" ] && mode="all"
-	[ "${mode:-hostlist}" = "hostlist" ] && mode_ok=1 || mode_ok=0
+	# any recognised mode is a valid setup (hostlist / autohostlist / all-none)
+	case "${mode:-hostlist}" in hostlist|autohostlist|all) mode_ok=1 ;; *) mode_ok=0 ;; esac
 	bc_running="$(Blockcheck_Running)"
 	ports="$(grep -E '^NFQWS_PORTS_TCP=' "$ZAPRET_CONF" 2>/dev/null | cut -d= -f2)"
 	if grep -q -- '--dpi-desync=fake --dpi-desync-fooling=md5sig' "$ZAPRET_CONF" 2>/dev/null; then
