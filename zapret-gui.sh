@@ -28,6 +28,10 @@ ZAPRET_INIT="${ZAPRET_DIR}/init.d/sysv/zapret"
 ZAPRET_CONF="${ZAPRET_DIR}/config"
 HOSTLIST="${ZAPRET_DIR}/ipset/zapret-hosts-user.txt"
 HOSTLIST_EXCLUDE="${ZAPRET_DIR}/ipset/zapret-hosts-user-exclude.txt"
+HOSTLIST_BAK="${HOSTLIST}.bak-gui"
+PROFILE_DIR="${ADDON_DIR}/profiles"
+SCHEDULE_FILE="${PROFILE_DIR}/schedule"
+SCHED_LAST="/tmp/zapret-gui-scheduler.last"
 BLOCKLOG="/tmp/zapret-blockcheck.log"
 BLOCKPID="/tmp/zapret-blockcheck.pid"
 SE="/jffs/scripts/service-event"
@@ -193,7 +197,7 @@ Strat_Line() {  # $1=strategy $2=ttl
 
 ######## apply settings decoded from the event blob ####################
 Apply_Event_Cfg() {
-	local dec en strat ttl ports mode hosts_raw sline p oi custom
+	local dec en strat ttl ports mode hosts_raw sline p oi custom restart_rc
 	dec="$(B64URL_D "$1")"
 	[ -z "$dec" ] && { logger -t "$ADDON" "event cfg decode failed"; return 1; }
 	en="$(echo "$dec" | sed -n 's/^enable=//p')"; [ "$en" = "1" ] || en=0
@@ -210,6 +214,7 @@ Apply_Event_Cfg() {
 	hosts_raw="$(echo "$dec" | sed -n 's/^hosts=//p')"
 	[ -f "$ZAPRET_CONF" ] || return 1
 	cp -f "$ZAPRET_CONF" "${ZAPRET_CONF}.bak-gui"
+	[ -f "$HOSTLIST" ] && cp -f "$HOSTLIST" "$HOSTLIST_BAK"
 	sed -i "s/^NFQWS_ENABLE=.*/NFQWS_ENABLE=$en/"         "$ZAPRET_CONF"
 	sed -i "s/^NFQWS_PORTS_TCP=.*/NFQWS_PORTS_TCP=$ports/" "$ZAPRET_CONF"
 	sed -i "s/^MODE_FILTER=.*/MODE_FILTER=$mode/"         "$ZAPRET_CONF"
@@ -239,9 +244,79 @@ Apply_Event_Cfg() {
 	else
 		: > "$HOSTLIST"
 	fi
-	if [ "$en" = "1" ]; then "$ZAPRET_INIT" restart >/dev/null 2>&1; else "$ZAPRET_INIT" stop >/dev/null 2>&1; fi
+	if [ "$en" = "1" ]; then
+		restart_rc=0
+		"$ZAPRET_INIT" restart >/dev/null 2>&1 || restart_rc=$?
+		sleep 2
+		# A restart can return success while nfqws immediately exits because the
+		# generated options are invalid. Roll back both config and hostlist.
+		if [ "$restart_rc" -ne 0 ] || ! pidof nfqws >/dev/null 2>&1; then
+			cp -f "${ZAPRET_CONF}.bak-gui" "$ZAPRET_CONF"
+			[ -f "$HOSTLIST_BAK" ] && cp -f "$HOSTLIST_BAK" "$HOSTLIST"
+			"$ZAPRET_INIT" restart >/dev/null 2>&1
+			logger -t "$ADDON" "apply failed (rc=$restart_rc); rolled back config and hostlist"
+			Gen_Status
+			return 1
+		fi
+	else
+		"$ZAPRET_INIT" stop >/dev/null 2>&1
+	fi
 	logger -t "$ADDON" "applied: en=$en strat=$strat ttl=$ttl ports=$ports mode=$mode hostlist_chars=${#hosts_raw}"
 	Gen_Status
+}
+
+######## router-side profiles and scheduler ############################
+Profile_Save_Event() {
+	local dec name encoded
+	dec="$(B64URL_D "$1")"
+	name="$(echo "$dec" | sed -n 's/^name=//p' | tr -cd 'A-Za-z0-9_.-')"
+	[ -n "$name" ] || return 1
+	mkdir -p "$PROFILE_DIR"
+	encoded="$(printf '%s\n' "$dec" | sed '/^name=/d' | B64E | tr '+/' '-_' | tr -d '=')"
+	[ -n "$encoded" ] || return 1
+	printf '%s\n' "$encoded" > "$PROFILE_DIR/${name}.profile"
+	logger -t "$ADDON" "router profile saved: $name"
+}
+Profile_Apply() {
+	local name payload
+	name="$(printf '%s' "$1" | tr -cd 'A-Za-z0-9_.-')"
+	payload="$PROFILE_DIR/${name}.profile"
+	[ -s "$payload" ] || { logger -t "$ADDON" "router profile not found: $name"; return 1; }
+	Apply_Event_Cfg "$(cat "$payload")"
+}
+Schedule_Save_Event() {
+	local dec name start end days delete
+	dec="$(B64URL_D "$1")"
+	name="$(echo "$dec" | sed -n 's/^name=//p' | tr -cd 'A-Za-z0-9_.-')"
+	start="$(echo "$dec" | sed -n 's/^start=//p' | tr -cd '0-9:')"
+	end="$(echo "$dec" | sed -n 's/^end=//p' | tr -cd '0-9:')"
+	days="$(echo "$dec" | sed -n 's/^days=//p' | tr -cd '1-7')"
+	delete="$(echo "$dec" | sed -n 's/^delete=//p')"
+	[ -n "$name" ] || return 1
+	mkdir -p "$PROFILE_DIR"; touch "$SCHEDULE_FILE"
+	sed -i "\\~^${name}|~d" "$SCHEDULE_FILE"
+	if [ "$delete" != "1" ] && [ -s "$PROFILE_DIR/${name}.profile" ] && [ -n "$start" ] && [ -n "$end" ] && [ -n "$days" ]; then
+		printf '%s|%s|%s|%s\n' "$name" "$start" "$end" "$days" >> "$SCHEDULE_FILE"
+		logger -t "$ADDON" "schedule saved: $name $start-$end days=$days"
+	else
+		logger -t "$ADDON" "schedule removed: $name"
+	fi
+}
+Scheduler() {
+	local now day name start end days last key
+	while :; do
+		now="$(date '+%H:%M')"; day="$(date '+%u')"
+		[ -f "$SCHEDULE_FILE" ] && while IFS='|' read -r name start end days; do
+			[ -n "$name" ] || continue
+			case "$days" in *"$day"*) ;; *) continue ;; esac
+			[ "$start" \< "$end" ] || continue
+			if { [ "$now" \> "$start" ] || [ "$now" = "$start" ]; } && [ "$now" \< "$end" ]; then
+				key="${day}|${name}|${start}"; last="$(cat "$SCHED_LAST" 2>/dev/null)"
+				if [ "$key" != "$last" ]; then printf '%s' "$key" > "$SCHED_LAST"; Profile_Apply "$name"; fi
+			fi
+		done < "$SCHEDULE_FILE"
+		sleep 30
+	done
 }
 
 # Remove every trace of a blockcheck run: its helper nfqws + the iptables chains
@@ -327,6 +402,22 @@ Do_Install() {  # best effort helper; run blockcheck afterwards to pick a strate
 	} >> /tmp/zapret_restart.log 2>&1 &
 	Gen_Status
 }
+Do_Update() {
+	local repo="https://raw.githubusercontent.com/Jarvis322/Asus-Merlin-Zapret-GUI/main" ts
+	ts="$(date +%Y%m%d-%H%M%S)"
+	command -v curl >/dev/null 2>&1 || { logger -t "$ADDON" "GitHub update failed: curl missing"; return 1; }
+	if ! curl -fsSL "$repo/zapret-gui.sh" -o /tmp/zapret-gui.sh.update || ! curl -fsSL "$repo/zapret-gui.asp" -o /tmp/zapret-gui.asp.update; then
+		logger -t "$ADDON" "GitHub update failed: download error"; rm -f /tmp/zapret-gui.*.update; return 1
+	fi
+	sh -n /tmp/zapret-gui.sh.update || { logger -t "$ADDON" "GitHub update rejected: shell syntax error"; rm -f /tmp/zapret-gui.*.update; return 1; }
+	cp -p "${ADDON_DIR}/${ADDON}.sh" "${ADDON_DIR}/${ADDON}.sh.bak-github-${ts}"
+	cp -p "$ASP_SRC" "${ASP_SRC}.bak-github-${ts}"
+	mv -f /tmp/zapret-gui.sh.update "${ADDON_DIR}/${ADDON}.sh"
+	mv -f /tmp/zapret-gui.asp.update "$ASP_SRC"
+	chmod 0755 "${ADDON_DIR}/${ADDON}.sh"; chmod 0644 "$ASP_SRC"
+	Mount_UI
+	logger -t "$ADDON" "updated from GitHub main"
+}
 
 ######## persistence hooks + install/uninstall #########################
 Add_Hook() { [ -f "$1" ] || { echo "#!/bin/sh" > "$1"; chmod 0755 "$1"; }; grep -qF "$2" "$1" || echo "$2" >> "$1"; }
@@ -334,6 +425,7 @@ Install() {
 	Ensure_Default_Lists
 	Add_Hook "$SS"  "[ -x ${ADDON_DIR}/${ADDON}.sh ] && ${ADDON_DIR}/${ADDON}.sh mount & ${TAG}"
 	Add_Hook "$SEE" "[ -x ${ADDON_DIR}/${ADDON}.sh ] && ${ADDON_DIR}/${ADDON}.sh event \"\$@\" & ${TAG}"
+	Add_Hook "$SS"  "[ -x ${ADDON_DIR}/${ADDON}.sh ] && ${ADDON_DIR}/${ADDON}.sh scheduler >/dev/null 2>&1 & ${TAG}-scheduler"
 	chmod 0755 "${ADDON_DIR}/${ADDON}.sh"; Mount_UI; echo "installed"
 }
 Uninstall() {
@@ -353,12 +445,17 @@ Handle_Event() {
 		"restart_zgA"*)  printf '%s' "${ev#restart_zgA}" >> /tmp/zg_blob ;;
 		"restart zgZ"*)  Apply_Event_Cfg "$(cat /tmp/zg_blob 2>/dev/null)" ;;
 		"restart_zgZ"*)  Apply_Event_Cfg "$(cat /tmp/zg_blob 2>/dev/null)" ;;
+		"restart_zpR"*)  printf '%s' "${ev#restart_zpR}" > /tmp/zp_blob ;;
+		"restart_zpA"*)  printf '%s' "${ev#restart_zpA}" >> /tmp/zp_blob ;;
+		"restart_zpZ"*)  Profile_Save_Event "$(cat /tmp/zp_blob 2>/dev/null)" ;;
+		"restart_zs"*)  Schedule_Save_Event "${ev#restart_zs}" ;;
 		*zgbc*)          Do_Blockcheck_Ev "${ev#*zgbc}" ;;
 		*zapretinstall*) Do_Install ;;
 		*zapretrestart*) Do_Restart ;;
 		*zapreton*)      Do_Enable ;;
 		*zapretoff*)     Do_Disable ;;
 		*zapretstatus*)  Gen_Status ;;
+		*zapretupdate*)  Do_Update ;;
 	esac
 	# re-mount page + menu after httpd restarts (tmpfs is rebuilt)
 	if printf '%s' "$ev" | grep -qE '(start|restart).*httpd'; then sleep 3; Mount_UI; fi
@@ -370,6 +467,8 @@ case "$1" in
 	mount)     Mount_UI ;;
 	unmount)   Unmount_UI ;;
 	status)    Gen_Status ;;
+	profile_apply) Profile_Apply "$2" ;;
+	scheduler) Scheduler ;;
 	event)     shift; Handle_Event "$@" ;;
 	enable)    Do_Enable ;;
 	disable)   Do_Disable ;;
