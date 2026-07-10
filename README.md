@@ -86,7 +86,7 @@ If your firmware *does* persist web POST fields, this still works — it just us
 
 On first mount/install, the addon creates the zapret hostlist only when it is missing or empty:
 
-- `/opt/zapret/ipset/zapret-hosts-user.txt` starts with `discord.com`
+- `/opt/zapret/ipset/zapret-hosts-user.txt` starts with the common Discord domains (`discord.com`, `discordapp.com`, `discord.gg`, `gateway.discord.gg` and CDN/media domains)
 - `/opt/zapret/ipset/zapret-hosts-user-exclude.txt` starts with Apple/App Store/iCloud update domains, OpenAI/ChatGPT domains, Claude/Anthropic domains, Gemini/Google domains and common Cloudflare auth/CDN dependencies
 
 The default mode is intended to keep zapret scoped: only domains in the hostlist are processed, while Apple and common AI tools are kept out of zapret matching. The GUI allows saving an intentionally empty hostlist; this clears the file instead of silently keeping old entries.

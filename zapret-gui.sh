@@ -60,7 +60,19 @@ Blockcheck_Running() {
 Ensure_Default_Lists() {
 	[ -d "${ZAPRET_DIR}/ipset" ] || return 0
 	if [ ! -s "$HOSTLIST" ]; then
-		printf '%s\n' "discord.com" > "$HOSTLIST"
+		cat > "$HOSTLIST" <<'EOF'
+discord.com
+discordapp.com
+discord.gg
+discordapp.net
+discordcdn.com
+discord.media
+gateway.discord.gg
+cdn.discordapp.com
+images-ext-1.discordapp.net
+media.discordapp.net
+status.discord.com
+EOF
 	fi
 	if [ ! -s "$HOSTLIST_EXCLUDE" ]; then
 		cat > "$HOSTLIST_EXCLUDE" <<'EOF'
