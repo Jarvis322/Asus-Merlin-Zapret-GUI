@@ -17,6 +17,8 @@ It adds a **zapret** tab under **Network Tools** with live status, one‑click c
 - **Safe defaults** — first install creates `discord.com` as the starter hostlist and an exclude list for Apple, ChatGPT/OpenAI, Claude/Anthropic, Gemini/Google and common Cloudflare auth/CDN hosts
 - **First-run setup wizard** — checks zapret, hostlist, exclude list, recommended `hostlist` mode and service readiness with quick actions to install, test and start
 - **Blockcheck** runner (background) + status/lock handling + **log viewer**
+- **Profiles** — save and restore named settings profiles in the browser
+- **Safe apply** — backs up config and hostlist, then automatically rolls back if the enabled service fails to restart
 - **Optional installer** — a button to download zapret if it isn't installed yet (experimental)
 - Config is **backed up** to `config.bak-gui` on every apply
 - **Survives** httpd restarts, firewall reloads and reboots (self re‑mounts)
@@ -102,8 +104,10 @@ The default mode is intended to keep zapret scoped: only domains in the hostlist
 - The menu is injected after `Advanced_Wireless_Survey.asp` (Network Tools → Site Survey). If your firmware's `menuTree.js` differs, change `MENU_ANCHOR` at the top of `zapret-gui.sh`.
 - Assumes the standard zapret layout: `/opt/zapret/config`, `/opt/zapret/init.d/sysv/zapret`, `/opt/zapret/ipset/zapret-hosts-user.txt`.
 - Firewall status uses `iptables -L` NFQUEUE detection for compatibility with AsusWRT builds where vendor targets can make `iptables -S` fail.
-- The *Install* button is best‑effort/experimental. Blockcheck runs in the background with a single-run lock, basic timeout support, clear missing-script errors and progress in the log viewer.
-- Tested on RT‑BE92U (Merlin 3.0.0.6.102.8). Should work on other Merlin builds; open an issue if the menu doesn't appear.
+- The *Install* button is best-effort/experimental. Blockcheck runs in the background with a single-run lock, basic timeout support, clear missing-script errors and progress in the log viewer.
+- Profiles are stored in the browser's local storage on the device used to access the GUI; they are not shared between browsers.
+- Applying an enabled profile creates `config.bak-gui` and `zapret-hosts-user.txt.bak-gui`. If zapret fails to restart or `nfqws` exits immediately, both files are restored automatically.
+- Tested on RT-BE92U (Merlin 3.0.0.6.102.8). Should work on other Merlin builds; open an issue if the menu doesn't appear.
 
 ## Credits
 
