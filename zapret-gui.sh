@@ -112,7 +112,10 @@ cloudflareaccess.com
 challenges.cloudflare.com
 EOF
 	fi
-	chmod 0666 "$HOSTLIST" "$HOSTLIST_EXCLUDE" 2>/dev/null
+	# 0664, not 0666: these files gate what zapret bypasses/leaves alone, and
+	# world-writable let any other local process edit them directly, bypassing
+	# every allowlist check in Apply_Event_Cfg.
+	chmod 0664 "$HOSTLIST" "$HOSTLIST_EXCLUDE" 2>/dev/null
 }
 
 ######## web page mount ################################################
@@ -157,7 +160,12 @@ Gen_Status() {
 	case "${mode:-hostlist}" in hostlist|autohostlist|all) mode_ok=1 ;; *) mode_ok=0 ;; esac
 	bc_running="$(Blockcheck_Running)"
 	ports="$(grep -E '^NFQWS_PORTS_TCP=' "$ZAPRET_CONF" 2>/dev/null | cut -d= -f2)"
-	if grep -q -- '--dpi-desync=fake --dpi-desync-fooling=md5sig' "$ZAPRET_CONF" 2>/dev/null; then
+	# Match the two full canonical lines, not just the shared substring - a
+	# hand-typed strat=custom line with the same fooling flag but a different
+	# ttl/port layout must not be mislabeled (and later silently overwritten
+	# by) the superonline preset.
+	if grep -qxF -- '--filter-tcp=80 --dpi-desync=fake --dpi-desync-fooling=md5sig --dpi-desync-ttl=6 <HOSTLIST> --new' "$ZAPRET_CONF" 2>/dev/null \
+	   && grep -qxF -- '--filter-tcp=443 --dpi-desync=fake --dpi-desync-fooling=md5sig --dpi-desync-ttl=6 <HOSTLIST> --new' "$ZAPRET_CONF" 2>/dev/null; then
 		strat="superonline"
 	else
 		strat="$(grep -oE 'dpi-desync=[a-z0-9,]+' "$ZAPRET_CONF" 2>/dev/null | head -1 | cut -d= -f2)"
@@ -185,7 +193,7 @@ Gen_Status() {
 	    -e "s|@@CUSTOM@@|${custom_now}|g" \
 	    -e "s|@@PAGE@@|${page}|g" \
 	    "$ASP_SRC" \
-	| awk -v hl="$HOSTLIST" '$0=="@@HOSTAREA@@"{print "<textarea id=\"f_hosts\" class=\"zg-hosts\" rows=\"9\" spellcheck=\"false\" oninput=\"upd_hc()\">"; while((getline l < hl)>0) print l; print "</textarea>"; next} {print}' \
+	| awk -v hl="$HOSTLIST" '$0=="@@HOSTAREA@@"{print "<textarea id=\"f_hosts\" class=\"zg-hosts\" rows=\"9\" spellcheck=\"false\" oninput=\"upd_hc()\">"; while((getline l < hl)>0){gsub(/&/,"\\&amp;",l); gsub(/</,"\\&lt;",l); gsub(/>/,"\\&gt;",l); print l}; print "</textarea>"; next} {print}' \
 	    > "/www/user/${page}"
 }
 
@@ -223,7 +231,12 @@ Apply_Event_Cfg() {
 	# charset and strip shell metacharacters ("$`;\ etc.) so it can never break
 	# out of the double-quoted NFQWS_OPT="" it gets written into.
 	custom="$(echo "$dec" | sed -n 's/^custom=//p' | tr -cd 'A-Za-z0-9 =,.:+/-')"
-	hosts_raw="$(echo "$dec" | sed -n 's/^hosts=//p')"
+	# Unlike strat/ttl/ports/mode/custom above, this used to reach the hostlist
+	# file (and later the admin page's <textarea>) completely unfiltered - a
+	# pasted "</textarea><script>..." payload was a stored XSS against the
+	# router's own admin session. Hostnames only ever need this charset; '~' is
+	# the wire-format line separator decoded below.
+	hosts_raw="$(echo "$dec" | sed -n 's/^hosts=//p' | tr -cd 'A-Za-z0-9.~-')"
 	[ -f "$ZAPRET_CONF" ] || return 1
 	cp -f "$ZAPRET_CONF" "${ZAPRET_CONF}.bak-gui"
 	[ -f "$HOSTLIST" ] && cp -f "$HOSTLIST" "$HOSTLIST_BAK"
@@ -460,9 +473,18 @@ Handle_Event() {
 		"restart_zgA"*)  printf '%s' "${ev#restart_zgA}" >> /tmp/zg_blob ;;
 		"restart zgZ"*)  Apply_Event_Cfg "$(cat /tmp/zg_blob 2>/dev/null)" ;;
 		"restart_zgZ"*)  Apply_Event_Cfg "$(cat /tmp/zg_blob 2>/dev/null)" ;;
+		# Same dual-form handling as zg above: some Merlin builds turn the
+		# rc_service event's "restart_" into "restart " (space) before it
+		# reaches service-event-end. Without both forms here, profile-save and
+		# schedule-save silently no-op on such firmware while the page still
+		# reports success (the AJAX call itself succeeds regardless).
+		"restart zpR"*)  printf '%s' "${ev#restart zpR}" > /tmp/zp_blob ;;
 		"restart_zpR"*)  printf '%s' "${ev#restart_zpR}" > /tmp/zp_blob ;;
+		"restart zpA"*)  printf '%s' "${ev#restart zpA}" >> /tmp/zp_blob ;;
 		"restart_zpA"*)  printf '%s' "${ev#restart_zpA}" >> /tmp/zp_blob ;;
+		"restart zpZ"*)  Profile_Save_Event "$(cat /tmp/zp_blob 2>/dev/null)" ;;
 		"restart_zpZ"*)  Profile_Save_Event "$(cat /tmp/zp_blob 2>/dev/null)" ;;
+		"restart zs"*)  Schedule_Save_Event "${ev#restart zs}" ;;
 		"restart_zs"*)  Schedule_Save_Event "${ev#restart_zs}" ;;
 		*zgbc*)          Do_Blockcheck_Ev "${ev#*zgbc}" ;;
 		*zapretinstall*) Do_Install ;;
