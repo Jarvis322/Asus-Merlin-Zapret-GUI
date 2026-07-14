@@ -76,6 +76,25 @@ Lock_Acquire() {   # $1=lock dir  $2=max wait seconds (default 20)
 }
 Lock_Release() { rm -rf "$1" 2>/dev/null; }
 
+# busybox has no `timeout` binary. Modeled on the background-subshell + kill-0
+# poll idiom already used for the blockcheck watchdog below - a command that
+# hangs (rather than failing fast) would otherwise block whichever critical
+# section called it forever.
+Run_With_Timeout() {   # $1=timeout_secs, then the command
+	local secs="$1" cmd_pid wd_pid rc
+	shift
+	"$@" &
+	cmd_pid=$!
+	( i=0
+	  while [ "$i" -lt "$secs" ]; do kill -0 "$cmd_pid" 2>/dev/null || exit 0; sleep 1; i=$((i+1)); done
+	  kill -TERM "$cmd_pid" 2>/dev/null; sleep 1; kill -KILL "$cmd_pid" 2>/dev/null
+	) &
+	wd_pid=$!
+	wait "$cmd_pid"; rc=$?
+	kill "$wd_pid" 2>/dev/null
+	return "$rc"
+}
+
 Blockcheck_Running() {
 	local p
 	[ -f "$BLOCKPID" ] || { echo 0; return; }
@@ -309,14 +328,17 @@ Apply_Event_Cfg() {
 	fi
 	if [ "$en" = "1" ]; then
 		restart_rc=0
-		"$ZAPRET_INIT" restart >/dev/null 2>&1 || restart_rc=$?
+		# 20s cap: a hang (rather than a fast failure) would otherwise block
+		# this whole function forever. A timeout now just surfaces as a
+		# non-zero restart_rc, which the existing rollback check already covers.
+		Run_With_Timeout 20 "$ZAPRET_INIT" restart >/dev/null 2>&1 || restart_rc=$?
 		sleep 2
 		# A restart can return success while nfqws immediately exits because the
 		# generated options are invalid. Roll back both config and hostlist.
 		if [ "$restart_rc" -ne 0 ] || ! pidof nfqws >/dev/null 2>&1; then
 			cp -f "${ZAPRET_CONF}.bak-gui" "$ZAPRET_CONF"
 			[ -f "$HOSTLIST_BAK" ] && cp -f "$HOSTLIST_BAK" "$HOSTLIST"
-			"$ZAPRET_INIT" restart >/dev/null 2>&1
+			Run_With_Timeout 20 "$ZAPRET_INIT" restart >/dev/null 2>&1
 			logger -t "$ADDON" "apply failed (rc=$restart_rc); rolled back config and hostlist"
 			Lock_Release "$LOCK_CONF"
 			Gen_Status
@@ -408,6 +430,15 @@ Cleanup_Blockcheck() {
 	done
 }
 
+# Used by the watchdog below to decide whether cleanup is actually needed,
+# instead of assuming "the tracked pid is gone" means "already cleaned up".
+Blockcheck_Left_Traces() {
+	iptables -t filter -S blockcheck_input  >/dev/null 2>&1 && return 0
+	iptables -t filter -S blockcheck_output >/dev/null 2>&1 && return 0
+	ps w | grep -qE '[n]fqws.*(qnum=59780|0x10000000)' && return 0
+	return 1
+}
+
 Do_Blockcheck_Ev() {
 	local dom bc_script
 	dom="$(B64URL_D "$1" | sed -n 's/^bc=//p' | tr -cd 'a-zA-Z0-9.-')"; [ -z "$dom" ] && dom=rutracker.org
@@ -455,10 +486,19 @@ Do_Blockcheck_Ev() {
 	# Force cleanup after ~4 min if the run is still alive.
 	(
 		bcpid="$(cat "$BLOCKPID" 2>/dev/null)"; i=0
-		while [ "$i" -lt 240 ]; do kill -0 "$bcpid" 2>/dev/null || exit 0; sleep 5; i=$((i+5)); done
-		Cleanup_Blockcheck
+		# `break` (not `exit 0`) on the tracked pid disappearing: an unclean
+		# kill (OOM, manual kill -9) before the main subshell reaches its own
+		# Cleanup_Blockcheck line would otherwise make the watchdog assume
+		# "pid gone" means "already cleaned up" and skip cleanup entirely,
+		# leaving the DROP chains up. Every exit path - clean finish, unclean
+		# kill, or the 240s budget expiring - now checks actual leftover state
+		# instead of trusting *why* the loop ended.
+		while [ "$i" -lt 240 ]; do kill -0 "$bcpid" 2>/dev/null || break; sleep 5; i=$((i+5)); done
+		if Blockcheck_Left_Traces; then
+			Cleanup_Blockcheck
+			echo '### watchdog: forced cleanup (unclean exit or timeout) ###' >> "$BLOCKLOG"
+		fi
 		rm -f "$BLOCKPID"
-		echo '### watchdog: blockcheck timed out, cleaned up ###' >> "$BLOCKLOG"
 		Gen_Status
 	) &
 	Gen_Status
