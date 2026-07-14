@@ -554,7 +554,13 @@ Do_Update() {
 	local sh_tmp="${ADDON_DIR}/.${ADDON}.sh.update.$$" asp_tmp="${ADDON_DIR}/.${ADDON}.asp.update.$$"
 	local cur_sz new_sz fn
 	ts="$(date +%Y%m%d-%H%M%S)"
-	command -v curl >/dev/null 2>&1 || { logger -t "$ADDON" "GitHub update failed: curl missing"; return 1; }
+	# Not `command -v curl`: this router's /bin/sh doesn't support the
+	# `command` builtin at all (confirmed on-device - it errors with
+	# "sh: command: not found" regardless of whether curl is actually
+	# present), which made this check always fail and silently disabled the
+	# whole self-update feature. Probing execution directly is portable
+	# POSIX and tests the thing that actually matters (can we run curl).
+	curl --version >/dev/null 2>&1 || { logger -t "$ADDON" "GitHub update failed: curl missing"; return 1; }
 
 	if ! curl -fsSL "$repo/zapret-gui.sh"  -o "$sh_tmp"  || \
 	   ! curl -fsSL "$repo/zapret-gui.asp" -o "$asp_tmp"; then
