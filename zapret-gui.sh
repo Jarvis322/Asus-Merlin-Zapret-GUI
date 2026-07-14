@@ -45,6 +45,37 @@ B64E()    { openssl base64 -A 2>/dev/null; }
 # base64url decode (rc_service names can't carry +/=)
 B64URL_D() { local b; b="$(echo "$1" | tr '_-' '/+')"; while [ $((${#b} % 4)) -ne 0 ]; do b="${b}="; done; echo "$b" | openssl base64 -d -A 2>/dev/null; }
 
+# mkdir is the only atomic primitive available (no flock/mktemp on this
+# firmware) - it either creates the dir or fails, never both/neither. A
+# holder that's kill -9'd (or the router losing power) never runs a trap, so
+# staleness (via the timestamp file written right after acquiring) is the
+# only way a wedged lock ever recovers. Two separate lock domains are used
+# (LOCK_CONF for Apply_Event_Cfg/Do_Enable/Do_Disable/Do_Restart's shared
+# $ZAPRET_CONF/$HOSTLIST, LOCK_BC for blockcheck's disjoint iptables chains +
+# helper nfqws) so a multi-minute blockcheck run never blocks a config apply
+# or the scheduler's 30s tick, and vice versa.
+LOCK_STALE_SEC=90
+LOCK_CONF="/tmp/.zapret-gui.lock-conf"
+LOCK_BC="/tmp/.zapret-gui.lock-bc"
+Lock_Acquire() {   # $1=lock dir  $2=max wait seconds (default 20)
+	local dir="$1" wait_max="${2:-20}" waited=0 now ts age
+	while :; do
+		if mkdir "$dir" 2>/dev/null; then
+			date +%s > "$dir/ts" 2>/dev/null
+			return 0
+		fi
+		ts="$(cat "$dir/ts" 2>/dev/null)"
+		if [ -n "$ts" ]; then
+			now="$(date +%s)"; age=$((now - ts))
+			[ "$age" -gt "$LOCK_STALE_SEC" ] && { rm -rf "$dir" 2>/dev/null; continue; }
+		fi
+		waited=$((waited + 1))
+		[ "$waited" -ge "$wait_max" ] && return 1
+		sleep 1
+	done
+}
+Lock_Release() { rm -rf "$1" 2>/dev/null; }
+
 Blockcheck_Running() {
 	local p
 	[ -f "$BLOCKPID" ] || { echo 0; return; }
@@ -198,9 +229,9 @@ Gen_Status() {
 }
 
 ######## simple actions ################################################
-Do_Enable()  { sed -i 's/^NFQWS_ENABLE=.*/NFQWS_ENABLE=1/' "$ZAPRET_CONF"; "$ZAPRET_INIT" restart >/dev/null 2>&1; Gen_Status; }
-Do_Disable() { "$ZAPRET_INIT" stop >/dev/null 2>&1; sed -i 's/^NFQWS_ENABLE=.*/NFQWS_ENABLE=0/' "$ZAPRET_CONF"; Gen_Status; }
-Do_Restart() { "$ZAPRET_INIT" restart >/dev/null 2>&1; Gen_Status; }
+Do_Enable()  { if Lock_Acquire "$LOCK_CONF" 20; then sed -i 's/^NFQWS_ENABLE=.*/NFQWS_ENABLE=1/' "$ZAPRET_CONF"; "$ZAPRET_INIT" restart >/dev/null 2>&1; Lock_Release "$LOCK_CONF"; else logger -t "$ADDON" "enable skipped: config lock busy"; fi; Gen_Status; }
+Do_Disable() { if Lock_Acquire "$LOCK_CONF" 20; then "$ZAPRET_INIT" stop >/dev/null 2>&1; sed -i 's/^NFQWS_ENABLE=.*/NFQWS_ENABLE=0/' "$ZAPRET_CONF"; Lock_Release "$LOCK_CONF"; else logger -t "$ADDON" "disable skipped: config lock busy"; fi; Gen_Status; }
+Do_Restart() { if Lock_Acquire "$LOCK_CONF" 20; then "$ZAPRET_INIT" restart >/dev/null 2>&1; Lock_Release "$LOCK_CONF"; else logger -t "$ADDON" "restart skipped: config lock busy"; fi; Gen_Status; }
 
 Strat_Line() {  # $1=strategy $2=ttl
 	case "$1" in
@@ -238,6 +269,10 @@ Apply_Event_Cfg() {
 	# the wire-format line separator decoded below.
 	hosts_raw="$(echo "$dec" | sed -n 's/^hosts=//p' | tr -cd 'A-Za-z0-9.~-')"
 	[ -f "$ZAPRET_CONF" ] || return 1
+	# Serializes against a second Apply_Event_Cfg (from another GUI submit, or
+	# from Profile_Apply fired by the 30s Scheduler tick) touching the same
+	# config/hostlist/temp files concurrently.
+	Lock_Acquire "$LOCK_CONF" 60 || { logger -t "$ADDON" "apply skipped: config lock busy"; return 1; }
 	cp -f "$ZAPRET_CONF" "${ZAPRET_CONF}.bak-gui"
 	[ -f "$HOSTLIST" ] && cp -f "$HOSTLIST" "$HOSTLIST_BAK"
 	sed -i "s/^NFQWS_ENABLE=.*/NFQWS_ENABLE=$en/"         "$ZAPRET_CONF"
@@ -283,6 +318,7 @@ Apply_Event_Cfg() {
 			[ -f "$HOSTLIST_BAK" ] && cp -f "$HOSTLIST_BAK" "$HOSTLIST"
 			"$ZAPRET_INIT" restart >/dev/null 2>&1
 			logger -t "$ADDON" "apply failed (rc=$restart_rc); rolled back config and hostlist"
+			Lock_Release "$LOCK_CONF"
 			Gen_Status
 			return 1
 		fi
@@ -290,6 +326,9 @@ Apply_Event_Cfg() {
 		"$ZAPRET_INIT" stop >/dev/null 2>&1
 	fi
 	logger -t "$ADDON" "applied: en=$en strat=$strat ttl=$ttl ports=$ports mode=$mode hostlist_chars=${#hosts_raw}"
+	# Release before Gen_Status - that's a read-only render step (greps,
+	# iptables -L), no reason to hold the lock through it.
+	Lock_Release "$LOCK_CONF"
 	Gen_Status
 }
 
@@ -378,7 +417,14 @@ Do_Blockcheck_Ev() {
 		Gen_Status
 		return
 	fi
+	# Closes the TOCTOU between "check Blockcheck_Running" and "write BLOCKPID
+	# for the new run": two near-simultaneous requests could otherwise both see
+	# 0 and both background a run, fighting over the same blockcheck_input/
+	# output chain names. Only the fast synchronous decide+launch step needs
+	# the lock - the run itself continues in the background after release.
+	Lock_Acquire "$LOCK_BC" 5 || { logger -t "$ADDON" "blockcheck start skipped: lock busy"; Gen_Status; return; }
 	if [ "$(Blockcheck_Running)" = "1" ]; then
+		Lock_Release "$LOCK_BC"
 		echo "blockcheck already running, ignoring duplicate request - $(date)" >> "$BLOCKLOG"
 		Gen_Status
 		return
@@ -403,6 +449,7 @@ Do_Blockcheck_Ev() {
 		Gen_Status
 	) > "$BLOCKLOG" 2>&1 &
 	echo $! > "$BLOCKPID"
+	Lock_Release "$LOCK_BC"
 	# Watchdog: `timeout` is absent on busybox, so a hung blockcheck could otherwise
 	# leave its DROP chains up forever (and Blockcheck_Running would block retries).
 	# Force cleanup after ~4 min if the run is still alive.
