@@ -518,8 +518,17 @@ Handle_Event() {
 		"restart_zgR"*)  printf '%s' "${ev#restart_zgR}" > /tmp/zg_blob ;;
 		"restart zgA"*)  printf '%s' "${ev#restart zgA}" >> /tmp/zg_blob ;;
 		"restart_zgA"*)  printf '%s' "${ev#restart_zgA}" >> /tmp/zg_blob ;;
-		"restart zgZ"*)  Apply_Event_Cfg "$(cat /tmp/zg_blob 2>/dev/null)" ;;
-		"restart_zgZ"*)  Apply_Event_Cfg "$(cat /tmp/zg_blob 2>/dev/null)" ;;
+		# Delete the blob right after reading it: a stray/replayed Z event (no
+		# fresh preceding R) would otherwise silently re-decode and re-apply
+		# whatever config happened to be sitting in the file - possibly a
+		# stale, previously-applied one, not "nothing". With the file gone,
+		# a stray Z decodes empty and hits Apply_Event_Cfg's existing
+		# "[ -z "$dec" ] && return 1" guard instead.
+		"restart zgZ"*|"restart_zgZ"*)
+			_payload="$(cat /tmp/zg_blob 2>/dev/null)"
+			rm -f /tmp/zg_blob
+			Apply_Event_Cfg "$_payload"
+			;;
 		# Same dual-form handling as zg above: some Merlin builds turn the
 		# rc_service event's "restart_" into "restart " (space) before it
 		# reaches service-event-end. Without both forms here, profile-save and
@@ -529,8 +538,12 @@ Handle_Event() {
 		"restart_zpR"*)  printf '%s' "${ev#restart_zpR}" > /tmp/zp_blob ;;
 		"restart zpA"*)  printf '%s' "${ev#restart zpA}" >> /tmp/zp_blob ;;
 		"restart_zpA"*)  printf '%s' "${ev#restart_zpA}" >> /tmp/zp_blob ;;
-		"restart zpZ"*)  Profile_Save_Event "$(cat /tmp/zp_blob 2>/dev/null)" ;;
-		"restart_zpZ"*)  Profile_Save_Event "$(cat /tmp/zp_blob 2>/dev/null)" ;;
+		# Same reasoning as zgZ above.
+		"restart zpZ"*|"restart_zpZ"*)
+			_payload="$(cat /tmp/zp_blob 2>/dev/null)"
+			rm -f /tmp/zp_blob
+			Profile_Save_Event "$_payload"
+			;;
 		"restart zs"*)  Schedule_Save_Event "${ev#restart zs}" ;;
 		"restart_zs"*)  Schedule_Save_Event "${ev#restart_zs}" ;;
 		*zgbc*)          Do_Blockcheck_Ev "${ev#*zgbc}" ;;
