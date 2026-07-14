@@ -157,7 +157,7 @@ Gen_Status() {
 	case "${mode:-hostlist}" in hostlist|autohostlist|all) mode_ok=1 ;; *) mode_ok=0 ;; esac
 	bc_running="$(Blockcheck_Running)"
 	ports="$(grep -E '^NFQWS_PORTS_TCP=' "$ZAPRET_CONF" 2>/dev/null | cut -d= -f2)"
-	if grep -q -- '--hostspell=hoSt' "$ZAPRET_CONF" 2>/dev/null && grep -q -- '--dpi-desync=multidisorder --dpi-desync-split-pos=2 --dpi-desync-split-seqovl=1' "$ZAPRET_CONF" 2>/dev/null; then
+	if grep -q -- '--dpi-desync=fake --dpi-desync-fooling=md5sig' "$ZAPRET_CONF" 2>/dev/null; then
 		strat="superonline"
 	else
 		strat="$(grep -oE 'dpi-desync=[a-z0-9,]+' "$ZAPRET_CONF" 2>/dev/null | head -1 | cut -d= -f2)"
@@ -232,13 +232,16 @@ Apply_Event_Cfg() {
 	sed -i "s/^MODE_FILTER=.*/MODE_FILTER=$mode/"         "$ZAPRET_CONF"
 	sline="$(Strat_Line "$strat" "$ttl")"
 	if [ "$strat" = "superonline" ]; then
-		# Superonline Discord profile found by focused blockcheck.
+		# fake + md5sig fooling defeats Superonline TR's DPI. Verified against a
+		# broad set of Superonline-blocked sites (pornhub/xvideos/xnxx/xhamster/
+		# discord), not just Discord — a narrower multidisorder-only variant of
+		# this preset passed Discord but left the porn-site block in place.
 		ports="80,443"
 		sed -i "s/^NFQWS_PORTS_TCP=.*/NFQWS_PORTS_TCP=$ports/" "$ZAPRET_CONF"
 		{
 			echo "NFQWS_OPT=\""
-			echo "--filter-tcp=80 --hostspell=hoSt <HOSTLIST> --new"
-			echo "--filter-tcp=443 --dpi-desync=multidisorder --dpi-desync-split-pos=2 --dpi-desync-split-seqovl=1 <HOSTLIST> --new"
+			echo "--filter-tcp=80 --dpi-desync=fake --dpi-desync-fooling=md5sig --dpi-desync-ttl=6 <HOSTLIST> --new"
+			echo "--filter-tcp=443 --dpi-desync=fake --dpi-desync-fooling=md5sig --dpi-desync-ttl=6 <HOSTLIST> --new"
 			echo "\""
 		} > /tmp/zg_opt
 	elif [ "$strat" = "custom" ]; then
