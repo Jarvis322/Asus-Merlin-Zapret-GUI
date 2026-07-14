@@ -95,6 +95,31 @@ Run_With_Timeout() {   # $1=timeout_secs, then the command
 	return "$rc"
 }
 
+# `pidof nfqws` alone only confirms *some* nfqws process exists - it can't
+# tell a freshly-started new-config process from a stale leftover old one if
+# "stop" silently failed to kill it. Checks the live process's actual
+# /proc/<pid>/cmdline against what Apply_Event_Cfg just wrote to the config,
+# so a restart that "succeeded" but didn't actually take effect is caught.
+# Verified on-device: --dpi-desync=... and --filter-tcp=$p (with the trailing
+# space) both appear verbatim in the real cmdline for every configured port.
+Nfqws_Matches_Config() {
+	local pid cmdline conf_opt ports p oi
+	pid="$(pidof nfqws 2>/dev/null | awk '{print $1}')"
+	[ -n "$pid" ] || return 1
+	cmdline="$(tr '\0' ' ' < /proc/$pid/cmdline 2>/dev/null)"
+	[ -n "$cmdline" ] || return 1
+	conf_opt="$(grep -oE -- '--dpi-desync=[a-zA-Z0-9,]+' "$ZAPRET_CONF" | head -1)"
+	[ -n "$conf_opt" ] || return 1
+	case "$cmdline" in *"$conf_opt"*) ;; *) return 1 ;; esac
+	ports="$(grep -E '^NFQWS_PORTS_TCP=' "$ZAPRET_CONF" 2>/dev/null | cut -d= -f2)"
+	oi="$IFS"; IFS=','
+	for p in $ports; do
+		case "$cmdline" in *"--filter-tcp=$p "*) ;; *) IFS="$oi"; return 1 ;; esac
+	done
+	IFS="$oi"
+	return 0
+}
+
 Blockcheck_Running() {
 	local p
 	[ -f "$BLOCKPID" ] || { echo 0; return; }
@@ -335,7 +360,7 @@ Apply_Event_Cfg() {
 		sleep 2
 		# A restart can return success while nfqws immediately exits because the
 		# generated options are invalid. Roll back both config and hostlist.
-		if [ "$restart_rc" -ne 0 ] || ! pidof nfqws >/dev/null 2>&1; then
+		if [ "$restart_rc" -ne 0 ] || ! Nfqws_Matches_Config; then
 			cp -f "${ZAPRET_CONF}.bak-gui" "$ZAPRET_CONF"
 			[ -f "$HOSTLIST_BAK" ] && cp -f "$HOSTLIST_BAK" "$HOSTLIST"
 			Run_With_Timeout 20 "$ZAPRET_INIT" restart >/dev/null 2>&1
