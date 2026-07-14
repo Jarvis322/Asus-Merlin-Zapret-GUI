@@ -31,7 +31,7 @@ HOSTLIST_EXCLUDE="${ZAPRET_DIR}/ipset/zapret-hosts-user-exclude.txt"
 HOSTLIST_BAK="${HOSTLIST}.bak-gui"
 PROFILE_DIR="${ADDON_DIR}/profiles"
 SCHEDULE_FILE="${PROFILE_DIR}/schedule"
-SCHED_LAST="/tmp/zapret-gui-scheduler.last"
+SCHED_LAST_DIR="/tmp/zapret-gui-sched-last"
 BLOCKLOG="/tmp/zapret-blockcheck.log"
 BLOCKPID="/tmp/zapret-blockcheck.pid"
 SE="/jffs/scripts/service-event"
@@ -417,16 +417,39 @@ Schedule_Save_Event() {
 	fi
 }
 Scheduler() {
-	local now day name start end days last key
+	local now day name start end days active last key f
+	mkdir -p "$SCHED_LAST_DIR" 2>/dev/null
 	while :; do
 		now="$(date '+%H:%M')"; day="$(date '+%u')"
 		[ -f "$SCHEDULE_FILE" ] && while IFS='|' read -r name start end days; do
 			[ -n "$name" ] || continue
 			case "$days" in *"$day"*) ;; *) continue ;; esac
-			[ "$start" \< "$end" ] || continue
-			if { [ "$now" \> "$start" ] || [ "$now" = "$start" ]; } && [ "$now" \< "$end" ]; then
-				key="${day}|${name}|${start}"; last="$(cat "$SCHED_LAST" 2>/dev/null)"
-				if [ "$key" != "$last" ]; then printf '%s' "$key" > "$SCHED_LAST"; Profile_Apply "$name"; fi
+			active=0
+			if [ "$start" \< "$end" ]; then
+				# same-day window, e.g. 09:00-17:00
+				if { [ "$now" \> "$start" ] || [ "$now" = "$start" ]; } && [ "$now" \< "$end" ]; then
+					active=1
+				fi
+			else
+				# start >= end: wraps past midnight, e.g. 22:00-06:00.
+				# start == end is treated as "active all day" - the natural
+				# fallout of this OR, and the confirmed intended behavior.
+				if { [ "$now" \> "$start" ] || [ "$now" = "$start" ]; } || [ "$now" \< "$end" ]; then
+					active=1
+				fi
+			fi
+			[ "$active" = "1" ] || continue
+			# One small file per schedule name (name is already tr -cd
+			# filtered to a filename-safe charset by Schedule_Save_Event),
+			# not a single flat file - applying schedule B could otherwise
+			# make schedule A look "not yet applied" again on the next tick,
+			# causing a spurious extra restart.
+			f="${SCHED_LAST_DIR}/${name}"
+			key="${day}|${start}"
+			last="$(cat "$f" 2>/dev/null)"
+			if [ "$key" != "$last" ]; then
+				printf '%s' "$key" > "$f"
+				Profile_Apply "$name"
 			fi
 		done < "$SCHEDULE_FILE"
 		sleep 30
