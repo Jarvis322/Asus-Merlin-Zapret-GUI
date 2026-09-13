@@ -557,8 +557,15 @@ Do_Install() {  # best effort helper; run blockcheck afterwards to pick a strate
 	echo "zapret install started - $(date)" > /tmp/zapret_restart.log
 	{
 		if [ -x "$ZAPRET_INIT" ]; then echo "already installed."; else
-			git --version >/dev/null 2>&1 && git clone --depth 1 "$url" "$ZAPRET_DIR"
-			[ -x "${ZAPRET_DIR}/install_bin.sh" ] && sh "${ZAPRET_DIR}/install_bin.sh"
+			if ! git --version >/dev/null 2>&1; then
+				echo "ERROR: git not found - run 'opkg install git git-http' over SSH, then retry install"
+			elif ! git clone --depth 1 "$url" "$ZAPRET_DIR"; then
+				echo "ERROR: git clone failed - check internet access and disk space on $ZAPRET_DIR"
+			elif [ ! -x "${ZAPRET_DIR}/install_bin.sh" ]; then
+				echo "ERROR: install_bin.sh missing after clone - upstream repo layout may have changed"
+			elif ! sh "${ZAPRET_DIR}/install_bin.sh"; then
+				echo "ERROR: install_bin.sh failed - see output above for the reason"
+			fi
 		fi
 		Ensure_Default_Lists
 		echo "### install step done ###"
