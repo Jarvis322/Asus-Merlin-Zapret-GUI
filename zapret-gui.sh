@@ -32,6 +32,8 @@ HOSTLIST_BAK="${HOSTLIST}.bak-gui"
 PROFILE_DIR="${ADDON_DIR}/profiles"
 SCHEDULE_FILE="${PROFILE_DIR}/schedule"
 SCHED_LAST_DIR="/tmp/zapret-gui-sched-last"
+WATCHDOG_LAST="/tmp/zapret-gui-watchdog-last"
+WATCHDOG_COOLDOWN_SEC=300
 BLOCKLOG="/tmp/zapret-blockcheck.log"
 BLOCKPID="/tmp/zapret-blockcheck.pid"
 SE="/jffs/scripts/service-event"
@@ -416,6 +418,31 @@ Schedule_Save_Event() {
 		logger -t "$ADDON" "schedule removed: $name"
 	fi
 }
+# Detects nfqws having crashed or come up not reflecting the config (the
+# same check Apply_Event_Cfg uses right after its own restart) between
+# applies, e.g. an OOM kill or a transient driver hiccup with nobody
+# watching. A cooldown file (not a plain retry loop) keeps a genuinely
+# broken config - one nfqws can never start with - from being restarted
+# every 30s forever; it gets one attempt per cooldown window and otherwise
+# waits for the user to notice and fix it via the GUI.
+Watchdog_Check() {
+	local enabled_now wd_last wd_now
+	[ -x "$ZAPRET_INIT" ] || return 0
+	enabled_now="$(grep -E '^NFQWS_ENABLE=' "$ZAPRET_CONF" 2>/dev/null | cut -d= -f2)"
+	[ "$enabled_now" = "1" ] || return 0
+	Nfqws_Matches_Config && return 0
+	wd_now="$(date +%s)"
+	wd_last="$(cat "$WATCHDOG_LAST" 2>/dev/null)"
+	if [ -n "$wd_last" ] && [ $((wd_now - wd_last)) -lt "$WATCHDOG_COOLDOWN_SEC" ]; then
+		return 0
+	fi
+	echo "$wd_now" > "$WATCHDOG_LAST"
+	Lock_Acquire "$LOCK_CONF" 10 || { logger -t "$ADDON" "watchdog: restart skipped, config lock busy"; return 0; }
+	logger -t "$ADDON" "watchdog: nfqws not running / not matching config, restarting"
+	Run_With_Timeout 20 "$ZAPRET_INIT" restart >/dev/null 2>&1
+	Lock_Release "$LOCK_CONF"
+	Gen_Status
+}
 Scheduler() {
 	local now day name start end days active last key f
 	mkdir -p "$SCHED_LAST_DIR" 2>/dev/null
@@ -452,6 +479,7 @@ Scheduler() {
 				Profile_Apply "$name"
 			fi
 		done < "$SCHEDULE_FILE"
+		Watchdog_Check
 		sleep 30
 	done
 }

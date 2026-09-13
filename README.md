@@ -20,6 +20,7 @@ It adds a **zapret** tab under **Network Tools** with live status, one‑click c
 - **Profiles** — save and restore named settings profiles in the browser, or on the router itself with a **scheduler** to auto-apply a profile on a daily time window (overnight windows like 22:00–06:00 supported)
 - **Safe apply** — backs up config and hostlist, verifies the *live process* actually reflects the new settings (not just that some `nfqws` is running), and automatically rolls back if the restart fails, hangs, or doesn't take effect
 - **Concurrency-safe** — config/hostlist edits, enable/disable/restart and blockcheck's start check are all serialized against each other, so a GUI submit racing a scheduled profile apply (or two rapid clicks) can't interleave or corrupt state
+- **Self-healing watchdog** — the scheduler's 30s tick also checks the live `nfqws` process against the config; if it's crashed or drifted (e.g. an OOM kill) while enabled, it's restarted automatically (rate-limited to at most once per 5 minutes)
 - **Optional installer** — a button to download zapret if it isn't installed yet (experimental)
 - Config is **backed up** to `config.bak-gui` on every apply; self-updates are **atomic** and validated beyond a bare syntax check
 - **Survives** httpd restarts, firewall reloads and reboots (self re‑mounts)
@@ -101,6 +102,7 @@ This firmware's shell (`/bin/sh`) has no `flock`, `mktemp` or `timeout` binary, 
 - **Health check** — after a restart, the live process's `/proc/<pid>/cmdline` is checked against what was just written to the config (not just "does *some* `nfqws` exist"), so a `stop` that silently failed to kill the old process can't be mistaken for a successful apply.
 - **Replay safety** — the settings/profile blob files are deleted immediately after being read, so a stray or duplicated apply event can't silently re-apply stale data.
 - **Atomic self-update** — `Do_Update` downloads into a same-directory temp file (not `/tmp`, which is a different filesystem here) so the final swap is a true atomic rename, and validates the download's size range and presence of core functions beyond a bare `sh -n` syntax check before committing to it.
+- **Watchdog** — the same scheduler process that ticks every 30s for scheduled profiles also runs `Watchdog_Check`, reusing the restart-health-check (`Nfqws_Matches_Config`) that a manual apply already relies on. A cooldown file caps it to one recovery attempt per 5 minutes, so a config that genuinely can't come up isn't restarted in a tight loop forever.
 
 ### Persistence hooks
 
