@@ -666,6 +666,15 @@ Do_Install() {  # best effort helper; run blockcheck afterwards to pick a strate
 		fi
 		Ensure_Default_Lists
 		echo "### install step done ###"
+		# The Gen_Status right after backgrounding this block below only
+		# captures the state at the moment the button was clicked (install
+		# not even started yet) - nothing re-rendered the page once the real
+		# work (download/extract/install_bin.sh, tens of seconds) actually
+		# finished, so a successful install left the GUI showing "not
+		# installed" until some unrelated action (Enable/Restart/Refresh)
+		# happened to regenerate it. This is what issue #3 hit right after
+		# install_bin.sh itself started succeeding.
+		Gen_Status
 	} >> /tmp/zapret_restart.log 2>&1 &
 	Gen_Status
 }
