@@ -602,7 +602,12 @@ Do_Install() {  # best effort helper; run blockcheck afterwards to pick a strate
 		# start - exactly what issue #3 hit after the first fix landed. Checking
 		# for the actual nfqws binary/symlink `install_bin.sh` creates catches
 		# that partial state and re-runs the real install instead of skipping it.
-		if [ -x "$ZAPRET_INIT" ] && [ -x "${ZAPRET_DIR}/nfq/nfqws" ]; then echo "already installed."; else
+		# Two layouts confirmed in the wild: `nfq/nfqws` (a full nfq/ source
+		# checkout with the arch symlink inside it - seen on an older/manually
+		# set up install) and a bare `nfq` symlink straight to the binary (what
+		# install_bin.sh v72.13 actually creates from the release tarball) -
+		# accept either.
+		if [ -x "$ZAPRET_INIT" ] && { [ -x "${ZAPRET_DIR}/nfq/nfqws" ] || [ -x "${ZAPRET_DIR}/nfq" ]; }; then echo "already installed."; else
 			if ! curl --version >/dev/null 2>&1; then
 				echo "ERROR: curl not found - run 'opkg install curl' over SSH, then retry install"
 			else
