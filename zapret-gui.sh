@@ -581,18 +581,58 @@ Do_Blockcheck_Ev() {
 }
 
 Do_Install() {  # best effort helper; run blockcheck afterwards to pick a strategy
-	local url="https://github.com/bol-van/zapret.git"
+	# Not `git clone`: upstream's install_bin.sh (run below) never downloads
+	# anything itself - it only tests candidate binaries already sitting in a
+	# local "binaries/<arch>/" directory next to it. That directory ships only
+	# in the GitHub *release* tarball, not in the git source tree, so cloning
+	# the repo always left install_bin.sh with nothing to find ("no binaries
+	# found") regardless of whether the router's architecture is actually
+	# supported - this is what issue #3 hit on a GT-AXE16000. Downloading the
+	# release tarball is also one fewer prerequisite: no git/opkg needed, only
+	# curl (already required by Do_Update).
+	local api="https://api.github.com/repos/bol-van/zapret/releases/latest"
+	local tag tmp src
 	echo "zapret install started - $(date)" > /tmp/zapret_restart.log
 	{
 		if [ -x "$ZAPRET_INIT" ]; then echo "already installed."; else
-			if ! git --version >/dev/null 2>&1; then
-				echo "ERROR: git not found - run 'opkg install git git-http' over SSH, then retry install"
-			elif ! git clone --depth 1 "$url" "$ZAPRET_DIR"; then
-				echo "ERROR: git clone failed - check internet access and disk space on $ZAPRET_DIR"
-			elif [ ! -x "${ZAPRET_DIR}/install_bin.sh" ]; then
-				echo "ERROR: install_bin.sh missing after clone - upstream repo layout may have changed"
-			elif ! sh "${ZAPRET_DIR}/install_bin.sh"; then
-				echo "ERROR: install_bin.sh failed - see output above for the reason"
+			if ! curl --version >/dev/null 2>&1; then
+				echo "ERROR: curl not found - run 'opkg install curl' over SSH, then retry install"
+			else
+				tag="$(curl -fsSL "$api" 2>/dev/null | grep -oE '"tag_name": *"[^"]+"' | head -1 | sed -E 's/.*"([^"]+)"$/\1/')"
+				if [ -z "$tag" ]; then
+					echo "ERROR: could not resolve the latest zapret release tag from the GitHub API"
+				else
+					tmp="/tmp/zapret-install-$$"
+					rm -rf "$tmp"; mkdir -p "$tmp"
+					if ! curl -fsSL -o "$tmp/zapret.tar.gz" "https://github.com/bol-van/zapret/releases/download/${tag}/zapret-${tag}.tar.gz"; then
+						echo "ERROR: failed to download zapret release ${tag} - check internet access"
+					elif ! tar xzf "$tmp/zapret.tar.gz" -C "$tmp"; then
+						echo "ERROR: failed to extract the zapret release tarball"
+					else
+						# the tarball extracts into a single "zapret-<tag>/" directory
+						# (the release asset's own name, e.g. "zapret-v72.13/"); move
+						# its contents into ZAPRET_DIR since busybox tar has no
+						# --strip-components to do this in one step. Not `find
+						# -mindepth/-maxdepth` - busybox find doesn't support either.
+						src="$tmp/zapret-${tag}"
+						if [ ! -d "$src" ]; then
+							echo "ERROR: unexpected tarball layout (no top-level directory found)"
+						else
+							# a stale partial dir from a previous failed attempt (e.g. an
+							# old git clone) could otherwise leave leftover files install_bin.sh
+							# or the health check might trip on.
+							rm -rf "$ZAPRET_DIR"; mkdir -p "$ZAPRET_DIR"
+							mv "$src"/* "$ZAPRET_DIR"/ 2>/dev/null
+							mv "$src"/.[!.]* "$ZAPRET_DIR"/ 2>/dev/null
+							if [ ! -x "${ZAPRET_DIR}/install_bin.sh" ]; then
+								echo "ERROR: install_bin.sh missing after extract - release layout may have changed"
+							elif ! sh "${ZAPRET_DIR}/install_bin.sh"; then
+								echo "ERROR: install_bin.sh failed - see output above (this router's CPU architecture may not have a prebuilt binary upstream)"
+							fi
+						fi
+					fi
+					rm -rf "$tmp"
+				fi
 			fi
 		fi
 		Ensure_Default_Lists
