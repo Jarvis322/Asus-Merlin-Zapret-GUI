@@ -594,7 +594,15 @@ Do_Install() {  # best effort helper; run blockcheck afterwards to pick a strate
 	local tag tmp src
 	echo "zapret install started - $(date)" > /tmp/zapret_restart.log
 	{
-		if [ -x "$ZAPRET_INIT" ]; then echo "already installed."; else
+		# ZAPRET_INIT existing isn't enough on its own: a previous attempt that
+		# git-cloned the source (the old, now-removed method) left behind a real
+		# init.d/sysv/zapret script without ever having real binaries, since
+		# those only ever came from the release tarball. That made every retry
+		# report "already installed" and stop, while nfqws could never actually
+		# start - exactly what issue #3 hit after the first fix landed. Checking
+		# for the actual nfqws binary/symlink `install_bin.sh` creates catches
+		# that partial state and re-runs the real install instead of skipping it.
+		if [ -x "$ZAPRET_INIT" ] && [ -x "${ZAPRET_DIR}/nfq/nfqws" ]; then echo "already installed."; else
 			if ! curl --version >/dev/null 2>&1; then
 				echo "ERROR: curl not found - run 'opkg install curl' over SSH, then retry install"
 			else
