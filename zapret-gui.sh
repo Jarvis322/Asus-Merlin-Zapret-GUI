@@ -607,7 +607,7 @@ Do_Install() {  # best effort helper; run blockcheck afterwards to pick a strate
 		# set up install) and a bare `nfq` symlink straight to the binary (what
 		# install_bin.sh v72.13 actually creates from the release tarball) -
 		# accept either.
-		if [ -x "$ZAPRET_INIT" ] && { [ -x "${ZAPRET_DIR}/nfq/nfqws" ] || [ -x "${ZAPRET_DIR}/nfq" ]; }; then echo "already installed."; else
+		if [ -x "$ZAPRET_INIT" ] && { [ -x "${ZAPRET_DIR}/nfq/nfqws" ] || [ -x "${ZAPRET_DIR}/nfq" ]; } && [ -f "$ZAPRET_CONF" ]; then echo "already installed."; else
 			if ! curl --version >/dev/null 2>&1; then
 				echo "ERROR: curl not found - run 'opkg install curl' over SSH, then retry install"
 			else
@@ -641,6 +641,22 @@ Do_Install() {  # best effort helper; run blockcheck afterwards to pick a strate
 								echo "ERROR: install_bin.sh missing after extract - release layout may have changed"
 							elif ! sh "${ZAPRET_DIR}/install_bin.sh"; then
 								echo "ERROR: install_bin.sh failed - see output above (this router's CPU architecture may not have a prebuilt binary upstream)"
+							else
+								# install_bin.sh only ever links binaries - it never touches
+								# config. Upstream's own install_easy.sh's first action is
+								# exactly this copy (config.default -> config); nothing else
+								# it does before that point is config-related, so replicating
+								# just this step is sufficient rather than running the whole
+								# (interactive-oriented) installer. Confirmed missing on a
+								# fresh GT-AXE16000 install (issue #3): "already installed"
+								# looked past thanks to the earlier fix, but the init script
+								# then failed outright with "can't open .../config".
+								if [ ! -f "${ZAPRET_CONF}" ] && [ -f "${ZAPRET_DIR}/config.default" ]; then
+									cp "${ZAPRET_DIR}/config.default" "${ZAPRET_CONF}"
+								fi
+								if [ ! -f "${ZAPRET_CONF}" ]; then
+									echo "ERROR: config.default missing after extract - could not create $ZAPRET_CONF"
+								fi
 							fi
 						fi
 					fi
