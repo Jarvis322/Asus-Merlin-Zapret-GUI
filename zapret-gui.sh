@@ -653,6 +653,17 @@ Do_Install() {  # best effort helper; run blockcheck afterwards to pick a strate
 								# then failed outright with "can't open .../config".
 								if [ ! -f "${ZAPRET_CONF}" ] && [ -f "${ZAPRET_DIR}/config.default" ]; then
 									cp "${ZAPRET_DIR}/config.default" "${ZAPRET_CONF}"
+									# Upstream's config.default enables UDP/443 (QUIC) by
+									# default (--dpi-desync-repeats=6, i.e. 6x duplicate
+									# fake packets per new QUIC flow). QUIC now carries a
+									# large share of everyday browsing (Chrome/YouTube/
+									# Google/Cloudflare-fronted sites), so that default made
+									# general browsing badly slow for a real user (issue #3)
+									# - the same regression this project's own reference
+									# router had already hit and fixed by disabling UDP
+									# entirely. TCP 80/443 (where the actual DPI bypass work
+									# happens) is untouched.
+									sed -i 's/^NFQWS_PORTS_UDP=.*/NFQWS_PORTS_UDP=/' "${ZAPRET_CONF}"
 								fi
 								if [ ! -f "${ZAPRET_CONF}" ]; then
 									echo "ERROR: config.default missing after extract - could not create $ZAPRET_CONF"
