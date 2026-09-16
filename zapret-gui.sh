@@ -222,34 +222,39 @@ Unmount_UI() {
 
 ######## build the page from the template with live values #############
 Gen_Status() {
-	local page enabled running pid qcount rules mode ports stamp strat ttl installed log_b64 hostlist_ok exclude_ok host_count exclude_count mode_ok bc_running custom_now
+	local page enabled running pid qcount rules mode ports stamp strat ttl installed log_b64 hostlist_ok exclude_ok host_count exclude_count mode_ok bc_running custom_now conf
 	page="$(am_settings_get zapretgui_page)"; [ -z "$page" ] && return
 	[ -x "$ZAPRET_INIT" ] && installed=1 || installed=0
 	[ -s "$HOSTLIST" ] && hostlist_ok=1 || hostlist_ok=0
 	[ -s "$HOSTLIST_EXCLUDE" ] && exclude_ok=1 || exclude_ok=0
 	host_count="$(grep -vE '^[[:space:]]*($|#)' "$HOSTLIST" 2>/dev/null | wc -l | tr -d ' ')"; [ -z "$host_count" ] && host_count=0
 	exclude_count="$(grep -vE '^[[:space:]]*($|#)' "$HOSTLIST_EXCLUDE" 2>/dev/null | wc -l | tr -d ' ')"; [ -z "$exclude_count" ] && exclude_count=0
-	enabled="$(grep -E '^NFQWS_ENABLE=' "$ZAPRET_CONF" 2>/dev/null | cut -d= -f2)"
-	mode="$(grep -E '^MODE_FILTER=' "$ZAPRET_CONF" 2>/dev/null | cut -d= -f2)"
+	# Read once, parse from memory below - this function runs on every action
+	# (enable/disable/restart/apply/blockcheck-start/every scheduler tick) and
+	# used to `grep`/`awk` $ZAPRET_CONF from disk seven separate times for the
+	# same handful of fields.
+	conf="$(cat "$ZAPRET_CONF" 2>/dev/null)"
+	enabled="$(echo "$conf" | grep -E '^NFQWS_ENABLE=' | cut -d= -f2)"
+	mode="$(echo "$conf" | grep -E '^MODE_FILTER=' | cut -d= -f2)"
 	# zapret stores "none" for process-everything; the GUI exposes it as "all"
 	[ "$mode" = "none" ] && mode="all"
 	# any recognised mode is a valid setup (hostlist / autohostlist / all-none)
 	case "${mode:-hostlist}" in hostlist|autohostlist|all) mode_ok=1 ;; *) mode_ok=0 ;; esac
 	bc_running="$(Blockcheck_Running)"
-	ports="$(grep -E '^NFQWS_PORTS_TCP=' "$ZAPRET_CONF" 2>/dev/null | cut -d= -f2)"
+	ports="$(echo "$conf" | grep -E '^NFQWS_PORTS_TCP=' | cut -d= -f2)"
 	# Match the two full canonical lines, not just the shared substring - a
 	# hand-typed strat=custom line with the same fooling flag but a different
 	# ttl/port layout must not be mislabeled (and later silently overwritten
 	# by) the superonline preset.
-	if grep -qxF -- '--filter-tcp=80 --dpi-desync=fake --dpi-desync-fooling=md5sig --dpi-desync-ttl=6 <HOSTLIST> --new' "$ZAPRET_CONF" 2>/dev/null \
-	   && grep -qxF -- '--filter-tcp=443 --dpi-desync=fake --dpi-desync-fooling=md5sig --dpi-desync-ttl=6 <HOSTLIST> --new' "$ZAPRET_CONF" 2>/dev/null; then
+	if echo "$conf" | grep -qxF -- '--filter-tcp=80 --dpi-desync=fake --dpi-desync-fooling=md5sig --dpi-desync-ttl=6 <HOSTLIST> --new' \
+	   && echo "$conf" | grep -qxF -- '--filter-tcp=443 --dpi-desync=fake --dpi-desync-fooling=md5sig --dpi-desync-ttl=6 <HOSTLIST> --new'; then
 		strat="superonline"
 	else
-		strat="$(grep -oE 'dpi-desync=[a-z0-9,]+' "$ZAPRET_CONF" 2>/dev/null | head -1 | cut -d= -f2)"
+		strat="$(echo "$conf" | grep -oE 'dpi-desync=[a-z0-9,]+' | head -1 | cut -d= -f2)"
 	fi
 	# current raw 443 desync options, used to prefill the "custom" field (round-trip)
-	custom_now="$(awk -F'--filter-tcp=443 ' '/--filter-tcp=443 /{sub(/ *(<HOSTLIST>|--new).*/,"",$2); print $2; exit}' "$ZAPRET_CONF" 2>/dev/null)"
-	ttl="$(grep -oE 'dpi-desync-ttl=[0-9]+' "$ZAPRET_CONF" 2>/dev/null | head -1 | cut -d= -f2)"
+	custom_now="$(echo "$conf" | awk -F'--filter-tcp=443 ' '/--filter-tcp=443 /{sub(/ *(<HOSTLIST>|--new).*/,"",$2); print $2; exit}')"
+	ttl="$(echo "$conf" | grep -oE 'dpi-desync-ttl=[0-9]+' | head -1 | cut -d= -f2)"
 	pid="$(pidof nfqws 2>/dev/null | awk '{print $1}')"
 	[ -n "$pid" ] && running=1 || running=0
 	qcount="$(awk '$1==200{print $8}' /proc/net/netfilter/nfnetlink_queue 2>/dev/null)"; [ -z "$qcount" ] && qcount=0
@@ -257,7 +262,7 @@ Gen_Status() {
 	# SKIPLOG are present.  The verbose listing still works and shows NFQUEUE.
 	rules="$(iptables -t mangle -L -n 2>/dev/null | grep -c 'NFQUEUE.*num 200')"
 	stamp="$(date '+%Y-%m-%d %H:%M:%S')"
-	log_b64="$( { echo '### nfqws:'; cat /proc/$(pidof nfqws 2>/dev/null|awk '{print $1}')/cmdline 2>/dev/null | tr '\0' ' '; echo; echo; echo '### last restart log:'; tail -20 /tmp/zapret_restart.log 2>/dev/null; echo; echo "### blockcheck (running=${bc_running}):"; tail -80 "$BLOCKLOG" 2>/dev/null; } | B64E )"
+	log_b64="$( { echo '### nfqws:'; [ -n "$pid" ] && cat /proc/$pid/cmdline 2>/dev/null | tr '\0' ' '; echo; echo; echo '### last restart log:'; tail -20 /tmp/zapret_restart.log 2>/dev/null; echo; echo "### blockcheck (running=${bc_running}):"; tail -80 "$BLOCKLOG" 2>/dev/null; } | B64E )"
 	sed -e "s|@@ENABLED@@|${enabled:-0}|g" -e "s|@@RUNNING@@|${running}|g" \
 	    -e "s|@@PID@@|${pid:-}|g" -e "s|@@QCOUNT@@|${qcount}|g" -e "s|@@RULES@@|${rules}|g" \
 	    -e "s|@@MODE@@|${mode:-}|g" -e "s|@@PORTS@@|${ports:-}|g" -e "s|@@STAMP@@|${stamp}|g" \
