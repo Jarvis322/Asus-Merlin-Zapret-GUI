@@ -280,9 +280,16 @@ Gen_Status() {
 }
 
 ######## simple actions ################################################
-Do_Enable()  { if Lock_Acquire "$LOCK_CONF" 20; then sed -i 's/^NFQWS_ENABLE=.*/NFQWS_ENABLE=1/' "$ZAPRET_CONF"; "$ZAPRET_INIT" restart >/dev/null 2>&1; Lock_Release "$LOCK_CONF"; else logger -t "$ADDON" "enable skipped: config lock busy"; fi; Gen_Status; }
-Do_Disable() { if Lock_Acquire "$LOCK_CONF" 20; then "$ZAPRET_INIT" stop >/dev/null 2>&1; sed -i 's/^NFQWS_ENABLE=.*/NFQWS_ENABLE=0/' "$ZAPRET_CONF"; Lock_Release "$LOCK_CONF"; else logger -t "$ADDON" "disable skipped: config lock busy"; fi; Gen_Status; }
-Do_Restart() { if Lock_Acquire "$LOCK_CONF" 20; then "$ZAPRET_INIT" restart >/dev/null 2>&1; Lock_Release "$LOCK_CONF"; else logger -t "$ADDON" "restart skipped: config lock busy"; fi; Gen_Status; }
+# Run_With_Timeout, not a bare "$ZAPRET_INIT" call: these three are the plain
+# Enable/Disable/Restart GUI buttons, and until now were the only config-lock
+# holders left unprotected against a hung init script - Apply_Event_Cfg and
+# Watchdog_Check both already wrap their restarts this way. A hang here would
+# block the httpd worker handling the event indefinitely and hold LOCK_CONF
+# for the same span, starving every other action (including the scheduler's
+# 30s tick) until the 90s stale-lock recovery finally kicked in.
+Do_Enable()  { if Lock_Acquire "$LOCK_CONF" 20; then sed -i 's/^NFQWS_ENABLE=.*/NFQWS_ENABLE=1/' "$ZAPRET_CONF"; Run_With_Timeout 20 "$ZAPRET_INIT" restart >/dev/null 2>&1; Lock_Release "$LOCK_CONF"; else logger -t "$ADDON" "enable skipped: config lock busy"; fi; Gen_Status; }
+Do_Disable() { if Lock_Acquire "$LOCK_CONF" 20; then Run_With_Timeout 20 "$ZAPRET_INIT" stop >/dev/null 2>&1; sed -i 's/^NFQWS_ENABLE=.*/NFQWS_ENABLE=0/' "$ZAPRET_CONF"; Lock_Release "$LOCK_CONF"; else logger -t "$ADDON" "disable skipped: config lock busy"; fi; Gen_Status; }
+Do_Restart() { if Lock_Acquire "$LOCK_CONF" 20; then Run_With_Timeout 20 "$ZAPRET_INIT" restart >/dev/null 2>&1; Lock_Release "$LOCK_CONF"; else logger -t "$ADDON" "restart skipped: config lock busy"; fi; Gen_Status; }
 
 Strat_Line() {  # $1=strategy $2=ttl
 	case "$1" in
