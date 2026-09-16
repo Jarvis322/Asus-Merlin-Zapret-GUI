@@ -271,7 +271,7 @@ function do_install(){
 <table width="760px" border="0" cellpadding="4" cellspacing="0" class="FormTitle" id="FormTitle"><tbody>
 <tr><td bgcolor="#4D595D" valign="top"><div>&nbsp;</div>
 <div class="zg-wrap">
-<div class="zg-head"><div><div class="zg-kicker">AĞ KONTROL MERKEZİ</div><div class="zg-title">zapret <span class="zg-version">v1.5</span></div><div class="zg-subtitle">DPI atlatma ayarlarını güvenli ve hızlı yönetin</div></div><div id="st_overall" class="zg-overall">&#8230;</div></div>
+<div class="zg-head"><div><div class="zg-kicker">AĞ KONTROL MERKEZİ</div><div class="zg-title">zapret <span class="zg-version">v1.6</span></div><div class="zg-subtitle">DPI atlatma ayarlarını güvenli ve hızlı yönetin</div></div><div id="st_overall" class="zg-overall">&#8230;</div></div>
 
 <!-- SETUP WIZARD -->
 <div class="zg-card" id="wizard_panel">
