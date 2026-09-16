@@ -20,7 +20,7 @@
 <script language="JavaScript" type="text/javascript" src="/validator.js"></script>
 <script language="JavaScript" type="text/javascript" src="/client_function.js"></script>
 <script type="text/javascript">
-var zapret_gui_version='v1.1', zapret_enabled='@@ENABLED@@', zapret_running='@@RUNNING@@', zapret_pid='@@PID@@',
+var zapret_enabled='@@ENABLED@@', zapret_running='@@RUNNING@@', zapret_pid='@@PID@@',
     zapret_qcount='@@QCOUNT@@', zapret_rules='@@RULES@@', zapret_mode='@@MODE@@',
     zapret_ports='@@PORTS@@', zapret_stamp='@@STAMP@@', zapret_strat='@@STRAT@@',
     zapret_ttl='@@TTL@@', zapret_installed='@@INSTALLED@@', zapret_log_b64='@@LOG_B64@@',
@@ -135,7 +135,7 @@ function hostlist_clear(){if(confirm('Hostlist tamamen temizlensin mi?')){$id('f
 function record_live(){try{var h=JSON.parse(localStorage.getItem('zapret_gui_history')||'[]');h.push({t:new Date().toISOString(),q:String(zapret_qcount),r:String(zapret_rules)});while(h.length>20)h.shift();localStorage.setItem('zapret_gui_history',JSON.stringify(h));}catch(e){}}
 function toggle_auto_refresh(){try{localStorage.setItem('zapret_gui_auto_refresh',$id('f_auto_refresh').checked?'1':'0');}catch(e){}if($id('f_auto_refresh').checked)setTimeout(function(){location.reload();},10000);}
 function load_auto_refresh(){try{$id('f_auto_refresh').checked=localStorage.getItem('zapret_gui_auto_refresh')==='1';}catch(e){}record_live();if($id('f_auto_refresh').checked)setTimeout(function(){location.reload();},10000);}
-function check_update(){var out=$id('update_status');if(out)out.textContent='Kontrol ediliyor...';try{var x=new XMLHttpRequest();x.open('GET','https://raw.githubusercontent.com/Jarvis322/Asus-Merlin-Zapret-GUI/main/zapret-gui.asp?ts='+new Date().getTime(),true);x.onreadystatechange=function(){if(x.readyState!==4)return;if(x.status!==200){if(out)out.textContent='GitHub kontrolü başarısız ('+x.status+').';return;}var m=x.responseText.match(/zg-version[^>]*>(v[0-9.]+)/);if(out)out.textContent=m?'Yerel '+zapret_gui_version+' / GitHub '+m[1]:'GitHub erişilebilir; sürüm etiketi bulunamadı.';};x.send();}catch(e){if(out)out.textContent='Güncelleme kontrolü kullanılamıyor.';}}
+function check_update(){var out=$id('update_status');if(out)out.textContent='Kontrol ediliyor...';try{var localEl=document.querySelector('.zg-version');var localVer=localEl?localEl.textContent:'?';var x=new XMLHttpRequest();x.open('GET','https://raw.githubusercontent.com/Jarvis322/Asus-Merlin-Zapret-GUI/main/zapret-gui.asp?ts='+new Date().getTime(),true);x.onreadystatechange=function(){if(x.readyState!==4)return;if(x.status!==200){if(out)out.textContent='GitHub kontrolü başarısız ('+x.status+').';return;}var m=x.responseText.match(/zg-version[^>]*>(v[0-9.]+)/);if(out)out.textContent=m?'Yerel '+localVer+' / GitHub '+m[1]:'GitHub erişilebilir; sürüm etiketi bulunamadı.';};x.send();}catch(e){if(out)out.textContent='Güncelleme kontrolü kullanılamıyor.';}}
 function update_from_github(){if(!confirm('Güncelleme yalnızca GitHub main üzerinden indirilecek. Mevcut dosyalar yedeklenir. Devam edilsin mi?'))return;post_action('restart_zapretupdate',15,16000);}
 function upd_hc(){
 	var t=$id('f_hosts'); if(!t) return;
