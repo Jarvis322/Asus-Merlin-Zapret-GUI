@@ -760,6 +760,19 @@ Do_Update() {
 
 ######## persistence hooks + install/uninstall #########################
 Add_Hook() { [ -f "$1" ] || { echo "#!/bin/sh" > "$1"; chmod 0755 "$1"; }; grep -qF "$2" "$1" || echo "$2" >> "$1"; }
+
+# Some Merlin builds symlink /root into tmpfs (e.g. /tmp/home/root), so
+# ~/.ssh/authorized_keys is silently wiped on every reboot. Back up the
+# current authorized_keys to JFFS (real flash) and register a boot hook
+# that restores it, so any key added for remote admin access (e.g. the
+# ZapretBar companion app) survives a reboot.
+Ssh_Key_Persist() {
+	local ak="${HOME}/.ssh/authorized_keys" backup="/jffs/${ADDON}_authorized_keys"
+	[ -s "$ak" ] || { echo "no authorized_keys found at ${ak}"; return 1; }
+	cp "$ak" "$backup"; chmod 600 "$backup"
+	Add_Hook "$SS" "[ -f ${backup} ] && { mkdir -p /root/.ssh; cp ${backup} /root/.ssh/authorized_keys; chmod 700 /root/.ssh; chmod 600 /root/.ssh/authorized_keys; } ${TAG}-sshkeys"
+	echo "authorized_keys backed up to ${backup}; restore hook installed in ${SS}"
+}
 Install() {
 	Ensure_Default_Lists
 	Add_Hook "$SS"  "[ -x ${ADDON_DIR}/${ADDON}.sh ] && ${ADDON_DIR}/${ADDON}.sh mount & ${TAG}"
@@ -834,5 +847,6 @@ case "$1" in
 	enable)    Do_Enable ;;
 	disable)   Do_Disable ;;
 	restart)   Do_Restart ;;
-	*) echo "usage: $0 {install|uninstall|mount|unmount|status|enable|disable|restart}" ;;
+	ssh_persist) Ssh_Key_Persist ;;
+	*) echo "usage: $0 {install|uninstall|mount|unmount|status|enable|disable|restart|ssh_persist}" ;;
 esac
