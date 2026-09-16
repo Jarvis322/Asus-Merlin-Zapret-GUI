@@ -78,7 +78,15 @@ function fill_form(){
 	$id('f_ports').value=zapret_ports; setSel('f_mode',zapret_mode);
 	try{ $id('f_log').textContent=atob(zapret_log_b64||''); }catch(e){}
 	if(zapret_installed!='1'){ $id('install_panel').style.display=''; $id('main_panel').style.display='none'; }
-	upd_hc();
+	upd_hc(); upd_strat_ui();
+}
+function upd_strat_ui(){
+	var s=$id('f_strat').value;
+	var ttl_used=(s=='fake'||s=='fakedsplit'||s=='fakeddisorder');
+	$id('f_ttl').disabled=!ttl_used;
+	$id('row_ttl').style.opacity=ttl_used?'1':'.45';
+	$id('f_custom').disabled=(s!='custom');
+	$id('row_custom').style.opacity=(s=='custom')?'1':'.45';
 }
 function profile_store(){
 	try{ return JSON.parse(localStorage.getItem('zapret_gui_profiles')||'{}'); }catch(e){ return {}; }
@@ -108,7 +116,7 @@ function load_profile(){
 	var n=$id('f_profile').value,o=profile_store();if(!n||!o[n])return;
 	var p=o[n];$id('f_enable').checked=!!p.enable;setSel('f_strat',p.strat);$id('f_ttl').value=p.ttl||2;
 	$id('f_ports').value=p.ports||'80,443';setSel('f_mode',p.mode||'hostlist');$id('f_custom').value=p.custom||'';
-	$id('f_hosts').value=p.hosts||'';upd_hc();
+	$id('f_hosts').value=p.hosts||'';upd_hc();upd_strat_ui();
 }
 function delete_profile(){
 	var n=$id('f_profile').value;if(!n)return;
@@ -320,7 +328,7 @@ function do_install(){
 <div class="zg-card-title">Ayarlar</div>
 <table class="zg-table">
 <tr><th width="40%">Etkin</th><td><input type="checkbox" id="f_enable"></td></tr>
-<tr><th>Strateji</th><td><select id="f_strat" class="zg-select">
+<tr><th>Strateji</th><td><select id="f_strat" class="zg-select" onchange="upd_strat_ui();">
 <option value="fake">fake (varsayılan)</option>
 <option value="fakedsplit">fakedsplit</option>
 <option value="fakeddisorder">fakeddisorder</option>
@@ -330,8 +338,8 @@ function do_install(){
 <option value="superonline">Superonline TR - fake+md5sig (onerilen)</option>
 <option value="custom">custom (blockcheck sonucu / elle)</option>
 </select></td></tr>
-<tr><th>Özel strateji<br><small>(sadece "custom" seçilince kullanılır)</small></th><td><input type="text" id="f_custom" class="zg-input" style="width:100%" maxlength="300" value="@@CUSTOM@@" placeholder="--dpi-desync=fake --dpi-desync-fooling=md5sig --dpi-desync-ttl=6"></td></tr>
-<tr><th>TTL (fake için)</th><td><input type="text" id="f_ttl" class="zg-input" maxlength="3" value="2"></td></tr>
+<tr id="row_custom"><th>Özel strateji<br><small>(sadece "custom" seçilince kullanılır)</small></th><td><input type="text" id="f_custom" class="zg-input" style="width:100%" maxlength="300" value="@@CUSTOM@@" placeholder="--dpi-desync=fake --dpi-desync-fooling=md5sig --dpi-desync-ttl=6"></td></tr>
+<tr id="row_ttl"><th>TTL (fake için)<br><small>(sadece fake/fakedsplit/fakeddisorder için kullanılır)</small></th><td><input type="text" id="f_ttl" class="zg-input" maxlength="3" value="2"></td></tr>
 <tr><th>Portlar (TCP, virgülle)</th><td><input type="text" id="f_ports" class="zg-input" maxlength="64" value="80,443"></td></tr>
 <tr><th>Mod</th><td><select id="f_mode" class="zg-select">
 <option value="hostlist">hostlist (sadece liste)</option>
