@@ -93,6 +93,16 @@ On first mount/install, the addon creates the zapret hostlist only when it is mi
 
 The default mode is intended to keep zapret scoped: only domains in the hostlist are processed, while Apple and common AI tools are kept out of zapret matching. The GUI allows saving an intentionally empty hostlist; this clears the file instead of silently keeping old entries.
 
+### Filter mode: `hostlist` vs `autohostlist` vs `all`
+
+This is the single setting most worth understanding, because the three modes trade off *speed on the very first visit to a blocked site* against *how much traffic zapret touches*:
+
+- **`hostlist`** — only domains explicitly listed in the hostlist are ever processed. Nothing outside that list is touched, and nothing outside that list is ever *auto-added*. Most predictable, but you maintain the list yourself.
+- **`autohostlist`** — a domain starts out **unprotected**. The very first connection to it goes through untouched; only after it gets blocked/reset by the ISP's DPI (a few dropped packets, governed by `AUTOHOSTLIST_FAIL_THRESHOLD`/`AUTOHOSTLIST_RETRANS_THRESHOLD` in `config`) does zapret learn it's blocked, add it to the auto-hostlist, and start applying the desync strategy. In practice this means: **the first load of a site you haven't visited before will fail or hang, and a reload a few seconds later will work** — and since every subdomain (`cdn.example.com`, `img.example.com`, ...) is learned independently, a page can load while some of its images/assets don't until *they've* individually failed once too. This is the mode most likely to look like a bug on first use — it isn't one, it's this mode working as designed.
+- **`all`** (`MODE_FILTER=none` in `config`) — the desync strategy is applied to *every* TCP connection on the configured ports, unconditionally, from the first packet. No learning delay, no reload-to-fix-it. This is what makes blocked sites open on the very first try, same as most from-scratch OpenWRT/Mikrotik zapret setups that don't opt into hostlist filtering at all. The cost is that zapret's CPU work happens on all matched traffic, not just blocked domains — in practice negligible on modern router hardware (observed: nfqws idle load stays under 5% CPU even under active browsing), but worth knowing if you're on constrained/older hardware.
+
+If a blocked site "doesn't open the first time but works after a refresh," that's `autohostlist` doing exactly what it's built to do — switch to `all` if you'd rather trade a small, usually-unmeasurable amount of CPU headroom for zero first-load delay.
+
 ### Safety / concurrency
 
 This firmware's shell (`/bin/sh`) has no `flock`, `mktemp` or `timeout` binary, so the addon builds its own primitives on top of what's actually available:
