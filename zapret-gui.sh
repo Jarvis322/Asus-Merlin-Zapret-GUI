@@ -242,19 +242,28 @@ Gen_Status() {
 	case "${mode:-hostlist}" in hostlist|autohostlist|all) mode_ok=1 ;; *) mode_ok=0 ;; esac
 	bc_running="$(Blockcheck_Running)"
 	ports="$(echo "$conf" | grep -E '^NFQWS_PORTS_TCP=' | cut -d= -f2)"
-	# Match the two full canonical lines, not just the shared substring - a
-	# hand-typed strat=custom line with the same fooling flag but a different
-	# ttl/port layout must not be mislabeled (and later silently overwritten
-	# by) the superonline preset.
-	if echo "$conf" | grep -qxF -- '--filter-tcp=80 --dpi-desync=fake --dpi-desync-fooling=md5sig --dpi-desync-ttl=6 <HOSTLIST> --new' \
+	# Apply_Event_Cfg now records exactly what the GUI applied (ZG_STRAT/
+	# ZG_TTL/ZG_CUSTOM) instead of leaving this function to reverse-engineer it
+	# from the raw NFQWS_OPT text. The old pattern-matching mislabeled a
+	# "custom" strategy built on fake/md5sig with a non-default TTL as plain
+	# "fake" - the dropdown silently jumped away from "custom" on reload and
+	# the TTL field re-enabled showing a stale value. Fall back to the old
+	# guesswork only for a config that predates this (or was hand-edited).
+	if echo "$conf" | grep -q '^ZG_STRAT='; then
+		strat="$(echo "$conf" | sed -n 's/^ZG_STRAT=//p' | tail -1)"
+		ttl="$(echo "$conf" | sed -n 's/^ZG_TTL=//p' | tail -1)"
+		custom_now="$(echo "$conf" | sed -n 's/^ZG_CUSTOM=//p' | tail -1)"
+	elif echo "$conf" | grep -qxF -- '--filter-tcp=80 --dpi-desync=fake --dpi-desync-fooling=md5sig --dpi-desync-ttl=6 <HOSTLIST> --new' \
 	   && echo "$conf" | grep -qxF -- '--filter-tcp=443 --dpi-desync=fake --dpi-desync-fooling=md5sig --dpi-desync-ttl=6 <HOSTLIST> --new'; then
 		strat="superonline"
+		custom_now="$(echo "$conf" | awk -F'--filter-tcp=443 ' '/--filter-tcp=443 /{sub(/ *(<HOSTLIST>|--new).*/,"",$2); print $2; exit}')"
+		ttl="$(echo "$conf" | grep -oE 'dpi-desync-ttl=[0-9]+' | head -1 | cut -d= -f2)"
 	else
 		strat="$(echo "$conf" | grep -oE 'dpi-desync=[a-z0-9,]+' | head -1 | cut -d= -f2)"
+		# current raw 443 desync options, used to prefill the "custom" field (round-trip)
+		custom_now="$(echo "$conf" | awk -F'--filter-tcp=443 ' '/--filter-tcp=443 /{sub(/ *(<HOSTLIST>|--new).*/,"",$2); print $2; exit}')"
+		ttl="$(echo "$conf" | grep -oE 'dpi-desync-ttl=[0-9]+' | head -1 | cut -d= -f2)"
 	fi
-	# current raw 443 desync options, used to prefill the "custom" field (round-trip)
-	custom_now="$(echo "$conf" | awk -F'--filter-tcp=443 ' '/--filter-tcp=443 /{sub(/ *(<HOSTLIST>|--new).*/,"",$2); print $2; exit}')"
-	ttl="$(echo "$conf" | grep -oE 'dpi-desync-ttl=[0-9]+' | head -1 | cut -d= -f2)"
 	pid="$(pidof nfqws 2>/dev/null | awk '{print $1}')"
 	[ -n "$pid" ] && running=1 || running=0
 	qcount="$(awk '$1==200{print $8}' /proc/net/netfilter/nfnetlink_queue 2>/dev/null)"; [ -z "$qcount" ] && qcount=0
@@ -336,6 +345,19 @@ Apply_Event_Cfg() {
 	sed -i "s/^NFQWS_ENABLE=.*/NFQWS_ENABLE=$en/"         "$ZAPRET_CONF"
 	sed -i "s/^NFQWS_PORTS_TCP=.*/NFQWS_PORTS_TCP=$ports/" "$ZAPRET_CONF"
 	sed -i "s/^MODE_FILTER=.*/MODE_FILTER=$mode/"         "$ZAPRET_CONF"
+	# Record what the GUI actually chose, instead of making Gen_Status guess it
+	# back from the raw NFQWS_OPT text later. The old guess (pattern-matching
+	# "dpi-desync=fake" etc.) mislabeled a "custom" strategy built on top of
+	# fake/md5sig with a non-default TTL as plain "fake" once the page reloaded
+	# - the strategy dropdown silently jumped away from "custom" and the TTL
+	# field re-enabled showing a stale value, looking like the save didn't
+	# stick. These three lines are the single source of truth for that.
+	sed -i '/^ZG_STRAT=/d;/^ZG_TTL=/d;/^ZG_CUSTOM=/d' "$ZAPRET_CONF"
+	{
+		echo "ZG_STRAT=$strat"
+		echo "ZG_TTL=$ttl"
+		echo "ZG_CUSTOM=$custom"
+	} >> "$ZAPRET_CONF"
 	sline="$(Strat_Line "$strat" "$ttl")"
 	if [ "$strat" = "superonline" ]; then
 		# fake + md5sig fooling defeats Superonline TR's DPI. Verified against a

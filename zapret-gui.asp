@@ -23,7 +23,7 @@
 var zapret_enabled='@@ENABLED@@', zapret_running='@@RUNNING@@', zapret_pid='@@PID@@',
     zapret_qcount='@@QCOUNT@@', zapret_rules='@@RULES@@', zapret_mode='@@MODE@@',
     zapret_ports='@@PORTS@@', zapret_stamp='@@STAMP@@', zapret_strat='@@STRAT@@',
-    zapret_ttl='@@TTL@@', zapret_installed='@@INSTALLED@@', zapret_log_b64='@@LOG_B64@@',
+    zapret_ttl='@@TTL@@', zapret_custom_now='@@CUSTOM@@', zapret_installed='@@INSTALLED@@', zapret_log_b64='@@LOG_B64@@',
     zapret_hostlist_ok='@@HOSTLIST_OK@@', zapret_exclude_ok='@@EXCLUDE_OK@@',
     zapret_host_count='@@HOST_COUNT@@', zapret_exclude_count='@@EXCLUDE_COUNT@@',
     zapret_mode_ok='@@MODE_OK@@', zapret_bc_running='@@BC_RUNNING@@';
@@ -51,6 +51,13 @@ function refresh_status(){
 	$id('st_qcount').innerHTML=zapret_qcount+' paket';
 	$id('st_mode').innerHTML=(zapret_mode||'-');
 	$id('st_ports').innerHTML=(zapret_ports||'-');
+	var strat_labels={fake:'fake (varsayılan)',fakedsplit:'fakedsplit',fakeddisorder:'fakeddisorder',
+		disorder2:'disorder2',split2:'split2',multisplit:'multisplit',
+		superonline:'Superonline TR - fake+md5sig (önerilen)',custom:'custom (blockcheck sonucu / elle)'};
+	var strat_ttl_used=(zapret_strat=='fake'||zapret_strat=='fakedsplit'||zapret_strat=='fakeddisorder');
+	$id('st_strat').innerHTML=(strat_labels[zapret_strat]||zapret_strat||'-');
+	$id('st_ttl_now').innerHTML=strat_ttl_used?(zapret_ttl||'-'):'<span style="color:#9cacbf;">kullanılmıyor (bu strateji TTL almıyor)</span>';
+	$id('st_custom_now').innerHTML=(zapret_strat=='custom')?('<code>'+(zapret_custom_now||'-')+'</code>'):'<span style="color:#9cacbf;">kullanılmıyor (custom seçili değil)</span>';
 	if($id('bc_status')) $id('bc_status').innerHTML=(zapret_bc_running=='1'?'&#9203; çalışıyor':'<span style="color:#888;">hazır (boşta)</span>');
 	var ok=(zapret_running=='1' && zapret_rules>0);
 	$id('st_overall').innerHTML=(ok?'<span style="color:#63e6b0;font-weight:bold;">● ÇALIŞIYOR</span>':'<span style="color:#ff8c9e;font-weight:bold;">● DEVRE DIŞI / SORUNLU</span>')+'<span style="color:#9cacbf;font-size:11px;">&nbsp;&nbsp;(güncelleme: '+zapret_stamp+')</span>';
@@ -237,7 +244,7 @@ function do_install(){
 .zg-profile-row .zg-btn{min-width:0;flex:1 1 118px;white-space:nowrap;padding-left:9px;padding-right:9px;}
 .zg-hint{color:#91a4bd;font-size:12px;line-height:1.5;}
 .zg-profile-card>.zg-hint{display:block;padding:0 18px 16px;}
-.zg-log{background:#09111d;color:#91f2c1;padding:13px;border-radius:10px;height:210px;overflow:auto;font-size:11px;white-space:pre-wrap;border:1px solid rgba(111,164,224,.16);}
+.zg-log{background:#09111d;color:#91f2c1;padding:13px;border-radius:10px;height:340px;overflow:auto;font-size:11px;white-space:pre-wrap;border:1px solid rgba(111,164,224,.16);}
 .zg-wizard{padding:16px;}.zg-wizard-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:9px;margin-bottom:14px;}
 .zg-step{padding:12px;border-radius:11px;background:rgba(5,13,25,.28);border:1px solid rgba(148,177,218,.12);min-height:44px;}
 .zg-step-label{display:block;color:#8fa4bf;font-size:11px;margin-bottom:5px;}.zg-ok{color:#63e6b0;font-weight:700;}.zg-bad{color:#ff8c9e;font-weight:700;}
@@ -271,7 +278,7 @@ function do_install(){
 <table width="760px" border="0" cellpadding="4" cellspacing="0" class="FormTitle" id="FormTitle"><tbody>
 <tr><td bgcolor="#4D595D" valign="top"><div>&nbsp;</div>
 <div class="zg-wrap">
-<div class="zg-head"><div><div class="zg-kicker">AĞ KONTROL MERKEZİ</div><div class="zg-title">zapret <span class="zg-version">v1.8</span></div><div class="zg-subtitle">DPI atlatma ayarlarını güvenli ve hızlı yönetin</div></div><div id="st_overall" class="zg-overall">&#8230;</div></div>
+<div class="zg-head"><div><div class="zg-kicker">AĞ KONTROL MERKEZİ</div><div class="zg-title">zapret <span class="zg-version">v1.9</span></div><div class="zg-subtitle">DPI atlatma ayarlarını güvenli ve hızlı yönetin</div></div><div id="st_overall" class="zg-overall">&#8230;</div></div>
 
 <!-- SETUP WIZARD -->
 <div class="zg-card" id="wizard_panel">
@@ -314,6 +321,9 @@ function do_install(){
 <tr><th>Kuyruk sayacı (queue 200)</th><td id="st_qcount">-</td></tr>
 <tr><th>Mod</th><td id="st_mode">-</td></tr>
 <tr><th>Portlar (TCP)</th><td id="st_ports">-</td></tr>
+<tr><th>Aktif strateji</th><td id="st_strat">-</td></tr>
+<tr><th>Aktif TTL</th><td id="st_ttl_now">-</td></tr>
+<tr><th>Aktif özel parametreler</th><td id="st_custom_now">-</td></tr>
 </table>
 </div>
 <div class="zg-actions">
