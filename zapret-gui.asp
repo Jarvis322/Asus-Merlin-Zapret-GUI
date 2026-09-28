@@ -20,10 +20,10 @@
 <script language="JavaScript" type="text/javascript" src="/validator.js"></script>
 <script language="JavaScript" type="text/javascript" src="/client_function.js"></script>
 <script type="text/javascript">
-var zapret_gui_version='v1.2', zapret_enabled='@@ENABLED@@', zapret_running='@@RUNNING@@', zapret_pid='@@PID@@',
+var zapret_enabled='@@ENABLED@@', zapret_running='@@RUNNING@@', zapret_pid='@@PID@@',
     zapret_qcount='@@QCOUNT@@', zapret_rules='@@RULES@@', zapret_mode='@@MODE@@',
     zapret_ports='@@PORTS@@', zapret_stamp='@@STAMP@@', zapret_strat='@@STRAT@@',
-    zapret_ttl='@@TTL@@', zapret_installed='@@INSTALLED@@', zapret_log_b64='@@LOG_B64@@',
+    zapret_ttl='@@TTL@@', zapret_custom_now='@@CUSTOM@@', zapret_installed='@@INSTALLED@@', zapret_log_b64='@@LOG_B64@@',
     zapret_hostlist_ok='@@HOSTLIST_OK@@', zapret_exclude_ok='@@EXCLUDE_OK@@',
     zapret_host_count='@@HOST_COUNT@@', zapret_exclude_count='@@EXCLUDE_COUNT@@',
     zapret_mode_ok='@@MODE_OK@@', zapret_bc_running='@@BC_RUNNING@@';
@@ -51,6 +51,13 @@ function refresh_status(){
 	$id('st_qcount').innerHTML=zapret_qcount+' paket';
 	$id('st_mode').innerHTML=(zapret_mode||'-');
 	$id('st_ports').innerHTML=(zapret_ports||'-');
+	var strat_labels={fake:'fake (varsayılan)',fakedsplit:'fakedsplit',fakeddisorder:'fakeddisorder',
+		disorder2:'disorder2',split2:'split2',multisplit:'multisplit',
+		superonline:'Superonline TR - fake+md5sig (önerilen)',custom:'custom (blockcheck sonucu / elle)'};
+	var strat_ttl_used=(zapret_strat=='fake'||zapret_strat=='fakedsplit'||zapret_strat=='fakeddisorder');
+	$id('st_strat').innerHTML=(strat_labels[zapret_strat]||zapret_strat||'-');
+	$id('st_ttl_now').innerHTML=strat_ttl_used?(zapret_ttl||'-'):'<span style="color:#9cacbf;">kullanılmıyor (bu strateji TTL almıyor)</span>';
+	$id('st_custom_now').innerHTML=(zapret_strat=='custom')?('<code>'+(zapret_custom_now||'-')+'</code>'):'<span style="color:#9cacbf;">kullanılmıyor (custom seçili değil)</span>';
 	if($id('bc_status')) $id('bc_status').innerHTML=(zapret_bc_running=='1'?'&#9203; çalışıyor':'<span style="color:#888;">hazır (boşta)</span>');
 	var ok=(zapret_running=='1' && zapret_rules>0);
 	$id('st_overall').innerHTML=(ok?'<span style="color:#63e6b0;font-weight:bold;">● ÇALIŞIYOR</span>':'<span style="color:#ff8c9e;font-weight:bold;">● DEVRE DIŞI / SORUNLU</span>')+'<span style="color:#9cacbf;font-size:11px;">&nbsp;&nbsp;(güncelleme: '+zapret_stamp+')</span>';
@@ -78,8 +85,15 @@ function fill_form(){
 	$id('f_ports').value=zapret_ports; setSel('f_mode',zapret_mode);
 	try{ $id('f_log').textContent=atob(zapret_log_b64||''); }catch(e){}
 	if(zapret_installed!='1'){ $id('install_panel').style.display=''; $id('main_panel').style.display='none'; }
-	upd_hc();
-	upd_exc();
+	upd_hc(); upd_exc(); upd_strat_ui();
+}
+function upd_strat_ui(){
+	var s=$id('f_strat').value;
+	var ttl_used=(s=='fake'||s=='fakedsplit'||s=='fakeddisorder');
+	$id('f_ttl').disabled=!ttl_used;
+	$id('row_ttl').style.opacity=ttl_used?'1':'.45';
+	$id('f_custom').disabled=(s!='custom');
+	$id('row_custom').style.opacity=(s=='custom')?'1':'.45';
 }
 function profile_store(){
 	try{ return JSON.parse(localStorage.getItem('zapret_gui_profiles')||'{}'); }catch(e){ return {}; }
@@ -111,6 +125,7 @@ function load_profile(){
 	$id('f_ports').value=p.ports||'80,443';setSel('f_mode',p.mode||'hostlist');$id('f_custom').value=p.custom||'';
 	$id('f_hosts').value=p.hosts||'';upd_hc();
 	$id('f_exclude').value=p.exclude||'';upd_exc();
+	upd_strat_ui();
 }
 function delete_profile(){
 	var n=$id('f_profile').value;if(!n)return;
@@ -133,7 +148,7 @@ function exclude_clear(){if(confirm('Exclude List tamamen temizlensin mi?')){$id
 function record_live(){try{var h=JSON.parse(localStorage.getItem('zapret_gui_history')||'[]');h.push({t:new Date().toISOString(),q:String(zapret_qcount),r:String(zapret_rules)});while(h.length>20)h.shift();localStorage.setItem('zapret_gui_history',JSON.stringify(h));}catch(e){}}
 function toggle_auto_refresh(){try{localStorage.setItem('zapret_gui_auto_refresh',$id('f_auto_refresh').checked?'1':'0');}catch(e){}if($id('f_auto_refresh').checked)setTimeout(function(){location.reload();},10000);}
 function load_auto_refresh(){try{$id('f_auto_refresh').checked=localStorage.getItem('zapret_gui_auto_refresh')==='1';}catch(e){}record_live();if($id('f_auto_refresh').checked)setTimeout(function(){location.reload();},10000);}
-function check_update(){var out=$id('update_status');if(out)out.textContent='Kontrol ediliyor...';try{var x=new XMLHttpRequest();x.open('GET','https://raw.githubusercontent.com/Razor221/Asus-Merlin-Zapret-GUI/main/zapret-gui.asp?ts='+new Date().getTime(),true);x.onreadystatechange=function(){if(x.readyState!==4)return;if(x.status!==200){if(out)out.textContent='GitHub kontrolü başarısız ('+x.status+').';return;}var m=x.responseText.match(/zg-version[^>]*>(v[0-9.]+)/);if(out)out.textContent=m?'Yerel '+zapret_gui_version+' / GitHub '+m[1]:'GitHub erişilebilir; sürüm etiketi bulunamadı.';};x.send();}catch(e){if(out)out.textContent='Güncelleme kontrolü kullanılamıyor.';}}
+function check_update(){var out=$id('update_status');if(out)out.textContent='Kontrol ediliyor...';try{var localEl=document.querySelector('.zg-version');var localVer=localEl?localEl.textContent:'?';var x=new XMLHttpRequest();x.open('GET','https://raw.githubusercontent.com/Razor221/Asus-Merlin-Zapret-GUI/main/zapret-gui.asp?ts='+new Date().getTime(),true);x.onreadystatechange=function(){if(x.readyState!==4)return;if(x.status!==200){if(out)out.textContent='GitHub kontrolü başarısız ('+x.status+').';return;}var m=x.responseText.match(/zg-version[^>]*>(v[0-9.]+)/);if(out)out.textContent=m?'Yerel '+localVer+' / GitHub '+m[1]:'GitHub erişilebilir; sürüm etiketi bulunamadı.';};x.send();}catch(e){if(out)out.textContent='Güncelleme kontrolü kullanılamıyor.';}}
 function update_from_github(){if(!confirm('Güncelleme yalnızca GitHub main üzerinden indirilecek. Mevcut dosyalar yedeklenir. Devam edilsin mi?'))return;post_action('restart_zapretupdate',15,16000);}
 function upd_hc(){
 	var t=$id('f_hosts'); if(!t) return;
@@ -243,7 +258,7 @@ function do_install(){
 .zg-profile-row .zg-btn{min-width:0;flex:1 1 118px;white-space:nowrap;padding-left:9px;padding-right:9px;}
 .zg-hint{color:#91a4bd;font-size:12px;line-height:1.5;}
 .zg-profile-card>.zg-hint{display:block;padding:0 18px 16px;}
-.zg-log{background:#09111d;color:#91f2c1;padding:13px;border-radius:10px;height:210px;overflow:auto;font-size:11px;white-space:pre-wrap;border:1px solid rgba(111,164,224,.16);}
+.zg-log{background:#09111d;color:#91f2c1;padding:13px;border-radius:10px;height:340px;overflow:auto;font-size:11px;white-space:pre-wrap;border:1px solid rgba(111,164,224,.16);}
 .zg-wizard{padding:16px;}.zg-wizard-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:9px;margin-bottom:14px;}
 .zg-step{padding:12px;border-radius:11px;background:rgba(5,13,25,.28);border:1px solid rgba(148,177,218,.12);min-height:44px;}
 .zg-step-label{display:block;color:#8fa4bf;font-size:11px;margin-bottom:5px;}.zg-ok{color:#63e6b0;font-weight:700;}.zg-bad{color:#ff8c9e;font-weight:700;}
@@ -277,7 +292,7 @@ function do_install(){
 <table width="760px" border="0" cellpadding="4" cellspacing="0" class="FormTitle" id="FormTitle"><tbody>
 <tr><td bgcolor="#4D595D" valign="top"><div>&nbsp;</div>
 <div class="zg-wrap">
-<div class="zg-head"><div><div class="zg-kicker">AĞ KONTROL MERKEZİ</div><div class="zg-title">zapret <span class="zg-version">v1.2</span></div><div class="zg-subtitle">DPI atlatma ayarlarını güvenli ve hızlı yönetin</div></div><div id="st_overall" class="zg-overall">&#8230;</div></div>
+<div class="zg-head"><div><div class="zg-kicker">AĞ KONTROL MERKEZİ</div><div class="zg-title">zapret <span class="zg-version">v1.9</span></div><div class="zg-subtitle">DPI atlatma ayarlarını güvenli ve hızlı yönetin</div></div><div id="st_overall" class="zg-overall">&#8230;</div></div>
 
 <!-- SETUP WIZARD -->
 <div class="zg-card" id="wizard_panel">
@@ -321,6 +336,9 @@ function do_install(){
 <tr><th>Kuyruk sayacı (queue 200)</th><td id="st_qcount">-</td></tr>
 <tr><th>Mod</th><td id="st_mode">-</td></tr>
 <tr><th>Portlar (TCP)</th><td id="st_ports">-</td></tr>
+<tr><th>Aktif strateji</th><td id="st_strat">-</td></tr>
+<tr><th>Aktif TTL</th><td id="st_ttl_now">-</td></tr>
+<tr><th>Aktif özel parametreler</th><td id="st_custom_now">-</td></tr>
 </table>
 </div>
 <div class="zg-actions">
@@ -335,7 +353,7 @@ function do_install(){
 <div class="zg-card-title">Ayarlar</div>
 <table class="zg-table">
 <tr><th width="40%">Etkin</th><td><input type="checkbox" id="f_enable"></td></tr>
-<tr><th>Strateji</th><td><select id="f_strat" class="zg-select">
+<tr><th>Strateji</th><td><select id="f_strat" class="zg-select" onchange="upd_strat_ui();">
 <option value="fake">fake (varsayılan)</option>
 <option value="fakedsplit">fakedsplit</option>
 <option value="fakeddisorder">fakeddisorder</option>
@@ -345,8 +363,8 @@ function do_install(){
 <option value="superonline">Superonline TR - fake+md5sig (onerilen)</option>
 <option value="custom">custom (blockcheck sonucu / elle)</option>
 </select></td></tr>
-<tr><th>Özel strateji<br><small>(sadece "custom" seçilince kullanılır)</small></th><td><input type="text" id="f_custom" class="zg-input" style="width:100%" maxlength="300" value="@@CUSTOM@@" placeholder="--dpi-desync=fake --dpi-desync-fooling=md5sig --dpi-desync-ttl=6"></td></tr>
-<tr><th>TTL (fake için)</th><td><input type="text" id="f_ttl" class="zg-input" maxlength="3" value="2"></td></tr>
+<tr id="row_custom"><th>Özel strateji<br><small>(sadece "custom" seçilince kullanılır)</small></th><td><input type="text" id="f_custom" class="zg-input" style="width:100%" maxlength="300" value="@@CUSTOM@@" placeholder="--dpi-desync=fake --dpi-desync-fooling=md5sig --dpi-desync-ttl=6"></td></tr>
+<tr id="row_ttl"><th>TTL (fake için)<br><small>(sadece fake/fakedsplit/fakeddisorder için kullanılır)</small></th><td><input type="text" id="f_ttl" class="zg-input" maxlength="3" value="2"></td></tr>
 <tr><th>Portlar (TCP, virgülle)</th><td><input type="text" id="f_ports" class="zg-input" maxlength="64" value="80,443"></td></tr>
 <tr><th>Mod</th><td><select id="f_mode" class="zg-select">
 <option value="hostlist">hostlist (sadece liste)</option>

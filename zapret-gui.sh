@@ -32,6 +32,8 @@ HOSTLIST_BAK="${HOSTLIST}.bak-gui"
 PROFILE_DIR="${ADDON_DIR}/profiles"
 SCHEDULE_FILE="${PROFILE_DIR}/schedule"
 SCHED_LAST_DIR="/tmp/zapret-gui-sched-last"
+WATCHDOG_LAST="/tmp/zapret-gui-watchdog-last"
+WATCHDOG_COOLDOWN_SEC=300
 BLOCKLOG="/tmp/zapret-blockcheck.log"
 BLOCKPID="/tmp/zapret-blockcheck.pid"
 SE="/jffs/scripts/service-event"
@@ -220,34 +222,48 @@ Unmount_UI() {
 
 ######## build the page from the template with live values #############
 Gen_Status() {
-	local page enabled running pid qcount rules mode ports stamp strat ttl installed log_b64 hostlist_ok exclude_ok host_count exclude_count mode_ok bc_running custom_now
+	local page enabled running pid qcount rules mode ports stamp strat ttl installed log_b64 hostlist_ok exclude_ok host_count exclude_count mode_ok bc_running custom_now conf
 	page="$(am_settings_get zapretgui_page)"; [ -z "$page" ] && return
 	[ -x "$ZAPRET_INIT" ] && installed=1 || installed=0
 	[ -s "$HOSTLIST" ] && hostlist_ok=1 || hostlist_ok=0
 	[ -s "$HOSTLIST_EXCLUDE" ] && exclude_ok=1 || exclude_ok=0
 	host_count="$(grep -vE '^[[:space:]]*($|#)' "$HOSTLIST" 2>/dev/null | wc -l | tr -d ' ')"; [ -z "$host_count" ] && host_count=0
 	exclude_count="$(grep -vE '^[[:space:]]*($|#)' "$HOSTLIST_EXCLUDE" 2>/dev/null | wc -l | tr -d ' ')"; [ -z "$exclude_count" ] && exclude_count=0
-	enabled="$(grep -E '^NFQWS_ENABLE=' "$ZAPRET_CONF" 2>/dev/null | cut -d= -f2)"
-	mode="$(grep -E '^MODE_FILTER=' "$ZAPRET_CONF" 2>/dev/null | cut -d= -f2)"
+	# Read once, parse from memory below - this function runs on every action
+	# (enable/disable/restart/apply/blockcheck-start/every scheduler tick) and
+	# used to `grep`/`awk` $ZAPRET_CONF from disk seven separate times for the
+	# same handful of fields.
+	conf="$(cat "$ZAPRET_CONF" 2>/dev/null)"
+	enabled="$(echo "$conf" | grep -E '^NFQWS_ENABLE=' | cut -d= -f2)"
+	mode="$(echo "$conf" | grep -E '^MODE_FILTER=' | cut -d= -f2)"
 	# zapret stores "none" for process-everything; the GUI exposes it as "all"
 	[ "$mode" = "none" ] && mode="all"
 	# any recognised mode is a valid setup (hostlist / autohostlist / all-none)
 	case "${mode:-hostlist}" in hostlist|autohostlist|all) mode_ok=1 ;; *) mode_ok=0 ;; esac
 	bc_running="$(Blockcheck_Running)"
-	ports="$(grep -E '^NFQWS_PORTS_TCP=' "$ZAPRET_CONF" 2>/dev/null | cut -d= -f2)"
-	# Match the two full canonical lines, not just the shared substring - a
-	# hand-typed strat=custom line with the same fooling flag but a different
-	# ttl/port layout must not be mislabeled (and later silently overwritten
-	# by) the superonline preset.
-	if grep -qxF -- '--filter-tcp=80 --dpi-desync=fake --dpi-desync-fooling=md5sig --dpi-desync-ttl=6 <HOSTLIST> --new' "$ZAPRET_CONF" 2>/dev/null \
-	   && grep -qxF -- '--filter-tcp=443 --dpi-desync=fake --dpi-desync-fooling=md5sig --dpi-desync-ttl=6 <HOSTLIST> --new' "$ZAPRET_CONF" 2>/dev/null; then
+	ports="$(echo "$conf" | grep -E '^NFQWS_PORTS_TCP=' | cut -d= -f2)"
+	# Apply_Event_Cfg now records exactly what the GUI applied (ZG_STRAT/
+	# ZG_TTL/ZG_CUSTOM) instead of leaving this function to reverse-engineer it
+	# from the raw NFQWS_OPT text. The old pattern-matching mislabeled a
+	# "custom" strategy built on fake/md5sig with a non-default TTL as plain
+	# "fake" - the dropdown silently jumped away from "custom" on reload and
+	# the TTL field re-enabled showing a stale value. Fall back to the old
+	# guesswork only for a config that predates this (or was hand-edited).
+	if echo "$conf" | grep -q '^ZG_STRAT='; then
+		strat="$(echo "$conf" | sed -n 's/^ZG_STRAT=//p' | tail -1)"
+		ttl="$(echo "$conf" | sed -n 's/^ZG_TTL=//p' | tail -1)"
+		custom_now="$(echo "$conf" | sed -n 's/^ZG_CUSTOM=//p' | tail -1)"
+	elif echo "$conf" | grep -qxF -- '--filter-tcp=80 --dpi-desync=fake --dpi-desync-fooling=md5sig --dpi-desync-ttl=6 <HOSTLIST> --new' \
+	   && echo "$conf" | grep -qxF -- '--filter-tcp=443 --dpi-desync=fake --dpi-desync-fooling=md5sig --dpi-desync-ttl=6 <HOSTLIST> --new'; then
 		strat="superonline"
+		custom_now="$(echo "$conf" | awk -F'--filter-tcp=443 ' '/--filter-tcp=443 /{sub(/ *(<HOSTLIST>|--new).*/,"",$2); print $2; exit}')"
+		ttl="$(echo "$conf" | grep -oE 'dpi-desync-ttl=[0-9]+' | head -1 | cut -d= -f2)"
 	else
-		strat="$(grep -oE 'dpi-desync=[a-z0-9,]+' "$ZAPRET_CONF" 2>/dev/null | head -1 | cut -d= -f2)"
+		strat="$(echo "$conf" | grep -oE 'dpi-desync=[a-z0-9,]+' | head -1 | cut -d= -f2)"
+		# current raw 443 desync options, used to prefill the "custom" field (round-trip)
+		custom_now="$(echo "$conf" | awk -F'--filter-tcp=443 ' '/--filter-tcp=443 /{sub(/ *(<HOSTLIST>|--new).*/,"",$2); print $2; exit}')"
+		ttl="$(echo "$conf" | grep -oE 'dpi-desync-ttl=[0-9]+' | head -1 | cut -d= -f2)"
 	fi
-	# current raw 443 desync options, used to prefill the "custom" field (round-trip)
-	custom_now="$(awk -F'--filter-tcp=443 ' '/--filter-tcp=443 /{sub(/ *(<HOSTLIST>|--new).*/,"",$2); print $2; exit}' "$ZAPRET_CONF" 2>/dev/null)"
-	ttl="$(grep -oE 'dpi-desync-ttl=[0-9]+' "$ZAPRET_CONF" 2>/dev/null | head -1 | cut -d= -f2)"
 	pid="$(pidof nfqws 2>/dev/null | awk '{print $1}')"
 	[ -n "$pid" ] && running=1 || running=0
 	qcount="$(awk '$1==200{print $8}' /proc/net/netfilter/nfnetlink_queue 2>/dev/null)"; [ -z "$qcount" ] && qcount=0
@@ -255,7 +271,7 @@ Gen_Status() {
 	# SKIPLOG are present.  The verbose listing still works and shows NFQUEUE.
 	rules="$(iptables -t mangle -L -n 2>/dev/null | grep -c 'NFQUEUE.*num 200')"
 	stamp="$(date '+%Y-%m-%d %H:%M:%S')"
-	log_b64="$( { echo '### nfqws:'; cat /proc/$(pidof nfqws 2>/dev/null|awk '{print $1}')/cmdline 2>/dev/null | tr '\0' ' '; echo; echo; echo '### last restart log:'; tail -20 /tmp/zapret_restart.log 2>/dev/null; echo; echo "### blockcheck (running=${bc_running}):"; tail -80 "$BLOCKLOG" 2>/dev/null; } | B64E )"
+	log_b64="$( { echo '### nfqws:'; [ -n "$pid" ] && cat /proc/$pid/cmdline 2>/dev/null | tr '\0' ' '; echo; echo; echo '### last restart log:'; tail -20 /tmp/zapret_restart.log 2>/dev/null; echo; echo "### blockcheck (running=${bc_running}):"; tail -80 "$BLOCKLOG" 2>/dev/null; } | B64E )"
 	sed -e "s|@@ENABLED@@|${enabled:-0}|g" -e "s|@@RUNNING@@|${running}|g" \
 	    -e "s|@@PID@@|${pid:-}|g" -e "s|@@QCOUNT@@|${qcount}|g" -e "s|@@RULES@@|${rules}|g" \
 	    -e "s|@@MODE@@|${mode:-}|g" -e "s|@@PORTS@@|${ports:-}|g" -e "s|@@STAMP@@|${stamp}|g" \
@@ -273,9 +289,16 @@ Gen_Status() {
 }
 
 ######## simple actions ################################################
-Do_Enable()  { if Lock_Acquire "$LOCK_CONF" 20; then sed -i 's/^NFQWS_ENABLE=.*/NFQWS_ENABLE=1/' "$ZAPRET_CONF"; "$ZAPRET_INIT" restart >/dev/null 2>&1; Lock_Release "$LOCK_CONF"; else logger -t "$ADDON" "enable skipped: config lock busy"; fi; Gen_Status; }
-Do_Disable() { if Lock_Acquire "$LOCK_CONF" 20; then "$ZAPRET_INIT" stop >/dev/null 2>&1; sed -i 's/^NFQWS_ENABLE=.*/NFQWS_ENABLE=0/' "$ZAPRET_CONF"; Lock_Release "$LOCK_CONF"; else logger -t "$ADDON" "disable skipped: config lock busy"; fi; Gen_Status; }
-Do_Restart() { if Lock_Acquire "$LOCK_CONF" 20; then "$ZAPRET_INIT" restart >/dev/null 2>&1; Lock_Release "$LOCK_CONF"; else logger -t "$ADDON" "restart skipped: config lock busy"; fi; Gen_Status; }
+# Run_With_Timeout, not a bare "$ZAPRET_INIT" call: these three are the plain
+# Enable/Disable/Restart GUI buttons, and until now were the only config-lock
+# holders left unprotected against a hung init script - Apply_Event_Cfg and
+# Watchdog_Check both already wrap their restarts this way. A hang here would
+# block the httpd worker handling the event indefinitely and hold LOCK_CONF
+# for the same span, starving every other action (including the scheduler's
+# 30s tick) until the 90s stale-lock recovery finally kicked in.
+Do_Enable()  { if Lock_Acquire "$LOCK_CONF" 20; then sed -i 's/^NFQWS_ENABLE=.*/NFQWS_ENABLE=1/' "$ZAPRET_CONF"; Run_With_Timeout 20 "$ZAPRET_INIT" restart >/dev/null 2>&1; Lock_Release "$LOCK_CONF"; else logger -t "$ADDON" "enable skipped: config lock busy"; fi; Gen_Status; }
+Do_Disable() { if Lock_Acquire "$LOCK_CONF" 20; then Run_With_Timeout 20 "$ZAPRET_INIT" stop >/dev/null 2>&1; sed -i 's/^NFQWS_ENABLE=.*/NFQWS_ENABLE=0/' "$ZAPRET_CONF"; Lock_Release "$LOCK_CONF"; else logger -t "$ADDON" "disable skipped: config lock busy"; fi; Gen_Status; }
+Do_Restart() { if Lock_Acquire "$LOCK_CONF" 20; then Run_With_Timeout 20 "$ZAPRET_INIT" restart >/dev/null 2>&1; Lock_Release "$LOCK_CONF"; else logger -t "$ADDON" "restart skipped: config lock busy"; fi; Gen_Status; }
 
 Strat_Line() {  # $1=strategy $2=ttl
 	case "$1" in
@@ -324,6 +347,19 @@ Apply_Event_Cfg() {
 	sed -i "s/^NFQWS_ENABLE=.*/NFQWS_ENABLE=$en/"         "$ZAPRET_CONF"
 	sed -i "s/^NFQWS_PORTS_TCP=.*/NFQWS_PORTS_TCP=$ports/" "$ZAPRET_CONF"
 	sed -i "s/^MODE_FILTER=.*/MODE_FILTER=$mode/"         "$ZAPRET_CONF"
+	# Record what the GUI actually chose, instead of making Gen_Status guess it
+	# back from the raw NFQWS_OPT text later. The old guess (pattern-matching
+	# "dpi-desync=fake" etc.) mislabeled a "custom" strategy built on top of
+	# fake/md5sig with a non-default TTL as plain "fake" once the page reloaded
+	# - the strategy dropdown silently jumped away from "custom" and the TTL
+	# field re-enabled showing a stale value, looking like the save didn't
+	# stick. These three lines are the single source of truth for that.
+	sed -i '/^ZG_STRAT=/d;/^ZG_TTL=/d;/^ZG_CUSTOM=/d' "$ZAPRET_CONF"
+	{
+		echo "ZG_STRAT=$strat"
+		echo "ZG_TTL=$ttl"
+		echo "ZG_CUSTOM=$custom"
+	} >> "$ZAPRET_CONF"
 	sline="$(Strat_Line "$strat" "$ttl")"
 	if [ "$strat" = "superonline" ]; then
 		# fake + md5sig fooling defeats Superonline TR's DPI. Verified against a
@@ -424,6 +460,31 @@ Schedule_Save_Event() {
 		logger -t "$ADDON" "schedule removed: $name"
 	fi
 }
+# Detects nfqws having crashed or come up not reflecting the config (the
+# same check Apply_Event_Cfg uses right after its own restart) between
+# applies, e.g. an OOM kill or a transient driver hiccup with nobody
+# watching. A cooldown file (not a plain retry loop) keeps a genuinely
+# broken config - one nfqws can never start with - from being restarted
+# every 30s forever; it gets one attempt per cooldown window and otherwise
+# waits for the user to notice and fix it via the GUI.
+Watchdog_Check() {
+	local enabled_now wd_last wd_now
+	[ -x "$ZAPRET_INIT" ] || return 0
+	enabled_now="$(grep -E '^NFQWS_ENABLE=' "$ZAPRET_CONF" 2>/dev/null | cut -d= -f2)"
+	[ "$enabled_now" = "1" ] || return 0
+	Nfqws_Matches_Config && return 0
+	wd_now="$(date +%s)"
+	wd_last="$(cat "$WATCHDOG_LAST" 2>/dev/null)"
+	if [ -n "$wd_last" ] && [ $((wd_now - wd_last)) -lt "$WATCHDOG_COOLDOWN_SEC" ]; then
+		return 0
+	fi
+	echo "$wd_now" > "$WATCHDOG_LAST"
+	Lock_Acquire "$LOCK_CONF" 10 || { logger -t "$ADDON" "watchdog: restart skipped, config lock busy"; return 0; }
+	logger -t "$ADDON" "watchdog: nfqws not running / not matching config, restarting"
+	Run_With_Timeout 20 "$ZAPRET_INIT" restart >/dev/null 2>&1
+	Lock_Release "$LOCK_CONF"
+	Gen_Status
+}
 Scheduler() {
 	local now day name start end days active last key f
 	mkdir -p "$SCHED_LAST_DIR" 2>/dev/null
@@ -460,6 +521,7 @@ Scheduler() {
 				Profile_Apply "$name"
 			fi
 		done < "$SCHEDULE_FILE"
+		Watchdog_Check
 		sleep 30
 	done
 }
@@ -561,15 +623,111 @@ Do_Blockcheck_Ev() {
 }
 
 Do_Install() {  # best effort helper; run blockcheck afterwards to pick a strategy
-	local url="https://github.com/bol-van/zapret.git"
+	# Not `git clone`: upstream's install_bin.sh (run below) never downloads
+	# anything itself - it only tests candidate binaries already sitting in a
+	# local "binaries/<arch>/" directory next to it. That directory ships only
+	# in the GitHub *release* tarball, not in the git source tree, so cloning
+	# the repo always left install_bin.sh with nothing to find ("no binaries
+	# found") regardless of whether the router's architecture is actually
+	# supported - this is what issue #3 hit on a GT-AXE16000. Downloading the
+	# release tarball is also one fewer prerequisite: no git/opkg needed, only
+	# curl (already required by Do_Update).
+	local api="https://api.github.com/repos/bol-van/zapret/releases/latest"
+	local tag tmp src
 	echo "zapret install started - $(date)" > /tmp/zapret_restart.log
 	{
-		if [ -x "$ZAPRET_INIT" ]; then echo "already installed."; else
-			git --version >/dev/null 2>&1 && git clone --depth 1 "$url" "$ZAPRET_DIR"
-			[ -x "${ZAPRET_DIR}/install_bin.sh" ] && sh "${ZAPRET_DIR}/install_bin.sh"
+		# ZAPRET_INIT existing isn't enough on its own: a previous attempt that
+		# git-cloned the source (the old, now-removed method) left behind a real
+		# init.d/sysv/zapret script without ever having real binaries, since
+		# those only ever came from the release tarball. That made every retry
+		# report "already installed" and stop, while nfqws could never actually
+		# start - exactly what issue #3 hit after the first fix landed. Checking
+		# for the actual nfqws binary/symlink `install_bin.sh` creates catches
+		# that partial state and re-runs the real install instead of skipping it.
+		# Two layouts confirmed in the wild: `nfq/nfqws` (a full nfq/ source
+		# checkout with the arch symlink inside it - seen on an older/manually
+		# set up install) and a bare `nfq` symlink straight to the binary (what
+		# install_bin.sh v72.13 actually creates from the release tarball) -
+		# accept either.
+		if [ -x "$ZAPRET_INIT" ] && { [ -x "${ZAPRET_DIR}/nfq/nfqws" ] || [ -x "${ZAPRET_DIR}/nfq" ]; } && [ -f "$ZAPRET_CONF" ]; then echo "already installed."; else
+			if ! curl --version >/dev/null 2>&1; then
+				echo "ERROR: curl not found - run 'opkg install curl' over SSH, then retry install"
+			else
+				tag="$(curl -fsSL "$api" 2>/dev/null | grep -oE '"tag_name": *"[^"]+"' | head -1 | sed -E 's/.*"([^"]+)"$/\1/')"
+				if [ -z "$tag" ]; then
+					echo "ERROR: could not resolve the latest zapret release tag from the GitHub API"
+				else
+					tmp="/tmp/zapret-install-$$"
+					rm -rf "$tmp"; mkdir -p "$tmp"
+					if ! curl -fsSL -o "$tmp/zapret.tar.gz" "https://github.com/bol-van/zapret/releases/download/${tag}/zapret-${tag}.tar.gz"; then
+						echo "ERROR: failed to download zapret release ${tag} - check internet access"
+					elif ! tar xzf "$tmp/zapret.tar.gz" -C "$tmp"; then
+						echo "ERROR: failed to extract the zapret release tarball"
+					else
+						# the tarball extracts into a single "zapret-<tag>/" directory
+						# (the release asset's own name, e.g. "zapret-v72.13/"); move
+						# its contents into ZAPRET_DIR since busybox tar has no
+						# --strip-components to do this in one step. Not `find
+						# -mindepth/-maxdepth` - busybox find doesn't support either.
+						src="$tmp/zapret-${tag}"
+						if [ ! -d "$src" ]; then
+							echo "ERROR: unexpected tarball layout (no top-level directory found)"
+						else
+							# a stale partial dir from a previous failed attempt (e.g. an
+							# old git clone) could otherwise leave leftover files install_bin.sh
+							# or the health check might trip on.
+							rm -rf "$ZAPRET_DIR"; mkdir -p "$ZAPRET_DIR"
+							mv "$src"/* "$ZAPRET_DIR"/ 2>/dev/null
+							mv "$src"/.[!.]* "$ZAPRET_DIR"/ 2>/dev/null
+							if [ ! -x "${ZAPRET_DIR}/install_bin.sh" ]; then
+								echo "ERROR: install_bin.sh missing after extract - release layout may have changed"
+							elif ! sh "${ZAPRET_DIR}/install_bin.sh"; then
+								echo "ERROR: install_bin.sh failed - see output above (this router's CPU architecture may not have a prebuilt binary upstream)"
+							else
+								# install_bin.sh only ever links binaries - it never touches
+								# config. Upstream's own install_easy.sh's first action is
+								# exactly this copy (config.default -> config); nothing else
+								# it does before that point is config-related, so replicating
+								# just this step is sufficient rather than running the whole
+								# (interactive-oriented) installer. Confirmed missing on a
+								# fresh GT-AXE16000 install (issue #3): "already installed"
+								# looked past thanks to the earlier fix, but the init script
+								# then failed outright with "can't open .../config".
+								if [ ! -f "${ZAPRET_CONF}" ] && [ -f "${ZAPRET_DIR}/config.default" ]; then
+									cp "${ZAPRET_DIR}/config.default" "${ZAPRET_CONF}"
+									# Upstream's config.default enables UDP/443 (QUIC) by
+									# default (--dpi-desync-repeats=6, i.e. 6x duplicate
+									# fake packets per new QUIC flow). QUIC now carries a
+									# large share of everyday browsing (Chrome/YouTube/
+									# Google/Cloudflare-fronted sites), so that default made
+									# general browsing badly slow for a real user (issue #3)
+									# - the same regression this project's own reference
+									# router had already hit and fixed by disabling UDP
+									# entirely. TCP 80/443 (where the actual DPI bypass work
+									# happens) is untouched.
+									sed -i 's/^NFQWS_PORTS_UDP=.*/NFQWS_PORTS_UDP=/' "${ZAPRET_CONF}"
+								fi
+								if [ ! -f "${ZAPRET_CONF}" ]; then
+									echo "ERROR: config.default missing after extract - could not create $ZAPRET_CONF"
+								fi
+							fi
+						fi
+					fi
+					rm -rf "$tmp"
+				fi
+			fi
 		fi
 		Ensure_Default_Lists
 		echo "### install step done ###"
+		# The Gen_Status right after backgrounding this block below only
+		# captures the state at the moment the button was clicked (install
+		# not even started yet) - nothing re-rendered the page once the real
+		# work (download/extract/install_bin.sh, tens of seconds) actually
+		# finished, so a successful install left the GUI showing "not
+		# installed" until some unrelated action (Enable/Restart/Refresh)
+		# happened to regenerate it. This is what issue #3 hit right after
+		# install_bin.sh itself started succeeding.
+		Gen_Status
 	} >> /tmp/zapret_restart.log 2>&1 &
 	Gen_Status
 }
@@ -641,6 +799,19 @@ Do_Update() {
 
 ######## persistence hooks + install/uninstall #########################
 Add_Hook() { [ -f "$1" ] || { echo "#!/bin/sh" > "$1"; chmod 0755 "$1"; }; grep -qF "$2" "$1" || echo "$2" >> "$1"; }
+
+# Some Merlin builds symlink /root into tmpfs (e.g. /tmp/home/root), so
+# ~/.ssh/authorized_keys is silently wiped on every reboot. Back up the
+# current authorized_keys to JFFS (real flash) and register a boot hook
+# that restores it, so any key added for remote admin access (e.g. the
+# ZapretBar companion app) survives a reboot.
+Ssh_Key_Persist() {
+	local ak="${HOME}/.ssh/authorized_keys" backup="/jffs/${ADDON}_authorized_keys"
+	[ -s "$ak" ] || { echo "no authorized_keys found at ${ak}"; return 1; }
+	cp "$ak" "$backup"; chmod 600 "$backup"
+	Add_Hook "$SS" "[ -f ${backup} ] && { mkdir -p /root/.ssh; cp ${backup} /root/.ssh/authorized_keys; chmod 700 /root/.ssh; chmod 600 /root/.ssh/authorized_keys; } ${TAG}-sshkeys"
+	echo "authorized_keys backed up to ${backup}; restore hook installed in ${SS}"
+}
 Install() {
 	Ensure_Default_Lists
 	Add_Hook "$SS"  "[ -x ${ADDON_DIR}/${ADDON}.sh ] && ${ADDON_DIR}/${ADDON}.sh mount & ${TAG}"
@@ -725,5 +896,6 @@ case "$1" in
 	enable)    Do_Enable ;;
 	disable)   Do_Disable ;;
 	restart)   Do_Restart ;;
-	*) echo "usage: $0 {install|uninstall|mount|unmount|status|enable|disable|restart}" ;;
+	ssh_persist) Ssh_Key_Persist ;;
+	*) echo "usage: $0 {install|uninstall|mount|unmount|status|enable|disable|restart|ssh_persist}" ;;
 esac
