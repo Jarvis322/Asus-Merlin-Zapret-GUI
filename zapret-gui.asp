@@ -85,7 +85,7 @@ function fill_form(){
 	$id('f_ports').value=zapret_ports; setSel('f_mode',zapret_mode);
 	try{ $id('f_log').textContent=atob(zapret_log_b64||''); }catch(e){}
 	if(zapret_installed!='1'){ $id('install_panel').style.display=''; $id('main_panel').style.display='none'; }
-	upd_hc(); upd_strat_ui();
+	upd_hc(); upd_exc(); upd_strat_ui();
 }
 function upd_strat_ui(){
 	var s=$id('f_strat').value;
@@ -104,7 +104,7 @@ function profile_save_store(o){
 function profile_data(){
 	return {enable:$id('f_enable').checked,strat:$id('f_strat').value,ttl:$id('f_ttl').value,
 		ports:$id('f_ports').value,mode:$id('f_mode').value,custom:$id('f_custom').value,
-		hosts:$id('f_hosts').value};
+		hosts:$id('f_hosts').value,exclude:$id('f_exclude').value};
 }
 function refresh_profiles(){
 	var s=$id('f_profile'); if(!s)return;
@@ -123,7 +123,9 @@ function load_profile(){
 	var n=$id('f_profile').value,o=profile_store();if(!n||!o[n])return;
 	var p=o[n];$id('f_enable').checked=!!p.enable;setSel('f_strat',p.strat);$id('f_ttl').value=p.ttl||2;
 	$id('f_ports').value=p.ports||'80,443';setSel('f_mode',p.mode||'hostlist');$id('f_custom').value=p.custom||'';
-	$id('f_hosts').value=p.hosts||'';upd_hc();upd_strat_ui();
+	$id('f_hosts').value=p.hosts||'';upd_hc();
+	if(p.exclude!==undefined){$id('f_exclude').value=p.exclude;upd_exc();}
+	upd_strat_ui();
 }
 function delete_profile(){
 	var n=$id('f_profile').value;if(!n)return;
@@ -131,19 +133,29 @@ function delete_profile(){
 }
 function export_profiles(){var raw=JSON.stringify(profile_store(),null,2);window.prompt('Profil yedeğini kopyalayın:',raw);}
 function import_profiles(){var raw=window.prompt('Daha önce dışa aktardığınız profil JSON verisini yapıştırın:');if(!raw)return;try{var o=JSON.parse(raw);if(!o||typeof o!=='object')throw 0;profile_save_store(o);refresh_profiles();alert('Profiller içe aktarıldı.');}catch(e){alert('Geçersiz profil JSON verisi.');}}
-function router_profile_blob(n){var p=profile_store()[n];if(!p)return '';return 'name='+n+'\nenable='+(p.enable?'1':'0')+'\nstrat='+(p.strat||'fake')+'\nttl='+(p.ttl||2)+'\nports='+(p.ports||'80,443')+'\nmode='+(p.mode||'hostlist')+'\ncustom='+(p.custom||'')+'\nhosts='+(p.hosts||'').replace(/\r?\n/g,'~');}
+function router_profile_blob(n){var p=profile_store()[n];if(!p)return '';return 'name='+n+'\nenable='+(p.enable?'1':'0')+'\nstrat='+(p.strat||'fake')+'\nttl='+(p.ttl||2)+'\nports='+(p.ports||'80,443')+'\nmode='+(p.mode||'hostlist')+'\ncustom='+(p.custom||'')+'\nhosts='+(p.hosts||'').replace(/\r?\n/g,'~')+(p.exclude!==undefined?'\nexclude='+p.exclude.replace(/\r?\n/g,'~'):'');}
 function send_router_profile(){var n=$id('f_profile').value;if(!n){alert('Önce yerel bir profil seçin.');return;}var b=b64url(router_profile_blob(n)),c=[];for(var i=0;i<b.length;i+=100)c.push(b.substr(i,100));var j=0;(function next(){if(j<c.length){fireEv('restart_zp'+(j===0?'R':'A')+c[j],function(){j++;setTimeout(next,300);});}else{fireEv('restart_zpZ',function(){alert('Profil routera kaydedildi: '+n);});}})();}
 function save_schedule(){var n=$id('f_profile').value,s=$id('f_schedule_start').value,e=$id('f_schedule_end').value,d=$id('f_schedule_days').value.replace(/[^1-7]/g,'');if(!n||!s||!e||!d){alert('Profil, başlangıç, bitiş ve günleri doldurun.');return;}fireEv('restart_zs'+b64url('name='+n+'\nstart='+s+'\nend='+e+'\ndays='+d),function(){alert('Zamanlama routera kaydedildi.');});}
 function delete_schedule(){var n=$id('f_profile').value;if(!n){alert('Profil seçin.');return;}fireEv('restart_zs'+b64url('name='+n+'\ndelete=1'),function(){alert('Profil zamanlaması kaldırıldı.');});}
+function exclude_lines(){return $id('f_exclude').value.replace(/\r/g,'').split('\n');}
 function host_lines(){return $id('f_hosts').value.replace(/\r/g,'').split('\n');}
 function clean_hostlist(){var seen={},out=[];host_lines().forEach(function(x){x=x.replace(/^\s+|\s+$/g,'');if(!x||x.charAt(0)==='#')return;var k=x.toLowerCase();if(!seen[k]){seen[k]=1;out.push(x);}});$id('f_hosts').value=out.join('\n');upd_hc();alert(out.length+' geçerli satır korundu; tekrarlar ve boş satırlar temizlendi.');}
 function validate_hostlist(){var bad=[],rx=/^(?=.{1,253}$)([a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/;host_lines().forEach(function(x,i){x=x.replace(/^\s+|\s+$/g,'');if(x&&x.charAt(0)!=='#'&&!rx.test(x))bad.push((i+1)+': '+x);});alert(bad.length?'Geçersiz satırlar:\n'+bad.slice(0,20).join('\n')+(bad.length>20?'\n...':''):'Hostlist biçimi geçerli.');}
+function clean_exclude(){var seen={},out=[];exclude_lines().forEach(function(x){x=x.replace(/^\s+|\s+$/g,'');if(!x)return;if(x.charAt(0)==='#'){out.push(x);return;}var k=x.toLowerCase();if(!seen[k]){seen[k]=1;out.push(x);}});$id('f_exclude').value=out.join('\n');upd_exc();alert('Tekrarlar ve boş satırlar temizlendi (yorum satırları korundu).');}
+function validate_exclude(){var bad=[],rx=/^(?=.{1,253}$)([a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/;exclude_lines().forEach(function(x,i){x=x.replace(/^\s+|\s+$/g,'');if(x&&x.charAt(0)!=='#'&&!rx.test(x))bad.push((i+1)+': '+x);});alert(bad.length?'Geçersiz satırlar:\n'+bad.slice(0,20).join('\n')+(bad.length>20?'\n...':''):'Exclude list biçimi geçerli.');}
+function exclude_clear(){if(confirm('Exclude List tamamen temizlensin mi? (Apple/OpenAI/Claude/Google gibi varsayılan korumalar da silinir)')){$id('f_exclude').value='';upd_exc();}}
 function hostlist_clear(){if(confirm('Hostlist tamamen temizlensin mi?')){$id('f_hosts').value='';upd_hc();}}
 function record_live(){try{var h=JSON.parse(localStorage.getItem('zapret_gui_history')||'[]');h.push({t:new Date().toISOString(),q:String(zapret_qcount),r:String(zapret_rules)});while(h.length>20)h.shift();localStorage.setItem('zapret_gui_history',JSON.stringify(h));}catch(e){}}
 function toggle_auto_refresh(){try{localStorage.setItem('zapret_gui_auto_refresh',$id('f_auto_refresh').checked?'1':'0');}catch(e){}if($id('f_auto_refresh').checked)setTimeout(function(){location.reload();},10000);}
 function load_auto_refresh(){try{$id('f_auto_refresh').checked=localStorage.getItem('zapret_gui_auto_refresh')==='1';}catch(e){}record_live();if($id('f_auto_refresh').checked)setTimeout(function(){location.reload();},10000);}
 function check_update(){var out=$id('update_status');if(out)out.textContent='Kontrol ediliyor...';try{var localEl=document.querySelector('.zg-version');var localVer=localEl?localEl.textContent:'?';var x=new XMLHttpRequest();x.open('GET','https://raw.githubusercontent.com/Jarvis322/Asus-Merlin-Zapret-GUI/main/zapret-gui.asp?ts='+new Date().getTime(),true);x.onreadystatechange=function(){if(x.readyState!==4)return;if(x.status!==200){if(out)out.textContent='GitHub kontrolü başarısız ('+x.status+').';return;}var m=x.responseText.match(/zg-version[^>]*>(v[0-9.]+)/);if(out)out.textContent=m?'Yerel '+localVer+' / GitHub '+m[1]:'GitHub erişilebilir; sürüm etiketi bulunamadı.';};x.send();}catch(e){if(out)out.textContent='Güncelleme kontrolü kullanılamıyor.';}}
 function update_from_github(){if(!confirm('Güncelleme yalnızca GitHub main üzerinden indirilecek. Mevcut dosyalar yedeklenir. Devam edilsin mi?'))return;post_action('restart_zapretupdate',15,16000);}
+function upd_exc(){
+	var t=$id('f_exclude'); if(!t) return;
+	var v=t.value.replace(/\r/g,'').replace(/\n+$/,'');
+	var n=(v?v.split('\n').filter(function(x){x=x.replace(/\s/g,'');return x.length>0&&x.charAt(0)!=='#';}).length:0);
+	$id('exc_c').textContent='satır: '+n;
+}
 function upd_hc(){
 	var t=$id('f_hosts'); if(!t) return;
 	var v=t.value.replace(/\r/g,'').replace(/\n+$/,'');
@@ -158,8 +170,8 @@ function post_action(script,wait,reloadMs){
 	if(reloadMs) setTimeout(function(){ location.reload(); }, reloadMs);
 }
 function do_action(act){
-	var m=(act=='zapretoff')?'zapret KAPATILSIN mı?':(act=='zapreton')?'zapret AÇILSIN mı?':'zapret yeniden başlatılsın mı?';
-	if(!confirm(m)) return; post_action('restart_'+act,12,14000);
+	var m=(act=='zapretoff')?'zapret KAPATILSIN mı?':(act=='zapreton')?'zapret AÇILSIN mı?':(act=='zapretbinupdate')?'zapret çekirdeği (nfqws/tpws) son sürüme güncellensin mi? İndirilen dosyalar sha256 ile doğrulanır, sorun olursa otomatik geri alınır.':'zapret yeniden başlatılsın mı?';
+	if(!confirm(m)) return; post_action('restart_'+act,12,(act=='zapretbinupdate')?30000:14000);
 }
 function b64url(s){ return btoa(s).replace(/\+/g,'-').replace(/\//g,'_').replace(/=/g,''); }
 function fireEv(script,cb){ httpApi.nvramSet({"action_mode":"apply","rc_service":script}, cb); }
@@ -167,10 +179,12 @@ function fireEv(script,cb){ httpApi.nvramSet({"action_mode":"apply","rc_service"
 function save_apply(){
 	if(!confirm('Ayarlar kaydedilip zapret yeniden başlatılsın mı? Başarısız olursa otomatik geri alınır.')) return;
 	var tv=$id('f_hosts').value.replace(/\r/g,'').replace(/\n+$/,'');
+	var ex_tv=$id('f_exclude').value.replace(/\r/g,'').replace(/\n+$/,'');
 	var blob='enable='+($id('f_enable').checked?'1':'0')+'\nstrat='+$id('f_strat').value
 	  +'\nttl='+$id('f_ttl').value+'\nports='+$id('f_ports').value+'\nmode='+$id('f_mode').value
 	  +'\ncustom='+($id('f_custom')?$id('f_custom').value:'')
-	  +'\nhosts='+tv.split('\n').join('~');
+	  +'\nhosts='+tv.split('\n').join('~')
+	  +'\nexclude='+ex_tv.split('\n').join('~');
 	var b=b64url(blob), chunks=[];
 	for(var i=0;i<b.length;i+=100) chunks.push(b.substr(i,100));
 	if(typeof showLoading==='function') showLoading(chunks.length+17);
@@ -278,7 +292,7 @@ function do_install(){
 <table width="760px" border="0" cellpadding="4" cellspacing="0" class="FormTitle" id="FormTitle"><tbody>
 <tr><td bgcolor="#4D595D" valign="top"><div>&nbsp;</div>
 <div class="zg-wrap">
-<div class="zg-head"><div><div class="zg-kicker">AĞ KONTROL MERKEZİ</div><div class="zg-title">zapret <span class="zg-version">v1.9</span></div><div class="zg-subtitle">DPI atlatma ayarlarını güvenli ve hızlı yönetin</div></div><div id="st_overall" class="zg-overall">&#8230;</div></div>
+<div class="zg-head"><div><div class="zg-kicker">AĞ KONTROL MERKEZİ</div><div class="zg-title">zapret <span class="zg-version">v1.10</span></div><div class="zg-subtitle">DPI atlatma ayarlarını güvenli ve hızlı yönetin</div></div><div id="st_overall" class="zg-overall">&#8230;</div></div>
 
 <!-- SETUP WIZARD -->
 <div class="zg-card" id="wizard_panel">
@@ -394,6 +408,20 @@ function do_install(){
 </div>
 </div>
 </div>
+
+<!-- EXCLUDE LIST (textarea content is server-rendered at @@EXCLUDEAREA@@) - contributed by Razor221 (PR #5) -->
+<div class="zg-card">
+<div class="zg-card-title">Exclude List (dışlananlar)</div>
+<div style="padding:12px 14px;">
+@@EXCLUDEAREA@@
+<div class="zg-meta"><span id="exc_c">satır: 0</span><span class="zg-hint">Her satıra bir alan adı; # ile başlayan satırlar yorumdur. Bu hedefler zapret'in dışında tutulur (ör. zapret açıkken connection reset veren banka siteleri).</span></div>
+<div class="zg-actions" style="justify-content:flex-start;margin:12px 0 0;">
+<input class="zg-btn zg-btn-secondary" onclick="clean_exclude();" type="button" value="Temizle ve Tekrarları Sil">
+<input class="zg-btn zg-btn-secondary" onclick="validate_exclude();" type="button" value="Doğrula">
+<input class="zg-btn zg-btn-secondary" onclick="exclude_clear();" type="button" value="Tümünü Temizle">
+</div>
+</div>
+</div>
 <div class="zg-actions">
 <input class="zg-btn zg-btn-save" onclick="save_apply();" type="button" value="Kaydet &amp; Uygula">
 </div>
@@ -410,6 +438,7 @@ function do_install(){
 <tr><th>Hızlı test profilleri</th><td><input class="zg-btn zg-btn-secondary" onclick="quick_test('discord.com');" type="button" value="Discord"> <input class="zg-btn zg-btn-secondary" onclick="quick_test('rutracker.org');" type="button" value="Rutracker"> <span class="zg-hint">Blockcheck, uygun stratejileri arka planda karşılaştırır.</span></td></tr>
 <tr><th>Canlı sayaç</th><td><label><input type="checkbox" id="f_auto_refresh" onchange="toggle_auto_refresh();"> 10 saniyede bir yenile</label></td></tr>
 <tr><th>GitHub güncellemesi</th><td><input class="zg-btn" onclick="check_update();" type="button" value="Sürümü Kontrol Et"> <input class="zg-btn zg-btn-save" onclick="update_from_github();" type="button" value="GitHub'dan Güncelle"> <span id="update_status" class="zg-hint">Kaynak: GitHub main</span></td></tr>
+<tr><th>zapret çekirdeği</th><td><input class="zg-btn zg-btn-save" onclick="do_action('zapretbinupdate');" type="button" value="Çekirdeği Güncelle"> <span class="zg-hint">Yalnızca nfqws/tpws ikili dosyalarını bol-van/zapret'in son sürümüne günceller (sha256 doğrulamalı, hata olursa otomatik geri alınır). Eklenti dosyalarını güncellemez.</span></td></tr>
 </table>
 </div>
 <div class="zg-card">

@@ -14,6 +14,8 @@ It adds a **zapret** tab under **Network Tools** with live status, one‑click c
 - **One‑click control** — Enable / Disable / Restart
 - **Editable settings** — desync strategy (`fake`, `fakedsplit`, `fakeddisorder`, `disorder2`, `split2`, `multisplit`), TTL, TCP ports, filter mode (`hostlist` / `autohostlist` / `all`)
 - **Hostlist editor** — edit the user hostlist in a textarea with a live line counter; works for lists of any size (auto‑chunked)
+- **Exclude list editor** — edit the exclude list (domains zapret must leave alone, e.g. banking sites that reset connections while zapret is on) right in the UI; `#` comment lines are preserved, and profiles/schedules saved before this field existed never wipe it *(contributed by [@Razor221](https://github.com/Razor221), PR #5)*
+- **zapret core update** — one button updates just the prebuilt `nfqws`/`tpws` binaries to bol-van/zapret's latest release: architecture picked by what actually runs on the router, every binary checked against the release's `sha256sum.txt`, swapped under the config lock, rolled back automatically if zapret doesn't come up healthy *(idea by [@Razor221](https://github.com/Razor221), PR #5)*
 - **Safe defaults** — first install creates `discord.com` as the starter hostlist and an exclude list for Apple, ChatGPT/OpenAI, Claude/Anthropic, Gemini/Google and common Cloudflare auth/CDN hosts
 - **First-run setup wizard** — checks zapret, hostlist, exclude list, recommended `hostlist` mode and service readiness with quick actions to install, test and start
 - **Blockcheck** runner (background) + status/lock handling + **log viewer**

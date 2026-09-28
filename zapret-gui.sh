@@ -284,7 +284,7 @@ Gen_Status() {
 	    -e "s|@@CUSTOM@@|${custom_now}|g" \
 	    -e "s|@@PAGE@@|${page}|g" \
 	    "$ASP_SRC" \
-	| awk -v hl="$HOSTLIST" '$0=="@@HOSTAREA@@"{print "<textarea id=\"f_hosts\" class=\"zg-hosts\" rows=\"9\" spellcheck=\"false\" oninput=\"upd_hc()\">"; while((getline l < hl)>0){gsub(/&/,"\\&amp;",l); gsub(/</,"\\&lt;",l); gsub(/>/,"\\&gt;",l); print l}; print "</textarea>"; next} {print}' \
+	| awk -v hl="$HOSTLIST" -v ex="$HOSTLIST_EXCLUDE" '/^@@HOSTAREA@@/{print "<textarea id=\"f_hosts\" class=\"zg-hosts\" rows=\"9\" spellcheck=\"false\" oninput=\"upd_hc()\">"; while((getline l < hl)>0){gsub(/&/,"\\&amp;",l); gsub(/</,"\\&lt;",l); gsub(/>/,"\\&gt;",l); print l}; print "</textarea>"; next} /^@@EXCLUDEAREA@@/{print "<textarea id=\"f_exclude\" class=\"zg-hosts\" rows=\"6\" spellcheck=\"false\" oninput=\"upd_exc()\">"; while((getline l < ex)>0){gsub(/&/,"\\&amp;",l); gsub(/</,"\\&lt;",l); gsub(/>/,"\\&gt;",l); print l}; print "</textarea>"; next} {print}' \
 	    > "/www/user/${page}"
 }
 
@@ -315,7 +315,7 @@ Strat_Line() {  # $1=strategy $2=ttl
 
 ######## apply settings decoded from the event blob ####################
 Apply_Event_Cfg() {
-	local dec en strat ttl ports mode hosts_raw sline p oi custom restart_rc
+	local dec en strat ttl ports mode hosts_raw exclude_raw has_exclude sline p oi custom restart_rc
 	dec="$(B64URL_D "$1")"
 	[ -z "$dec" ] && { logger -t "$ADDON" "event cfg decode failed"; return 1; }
 	en="$(echo "$dec" | sed -n 's/^enable=//p')"; [ "$en" = "1" ] || en=0
@@ -335,6 +335,20 @@ Apply_Event_Cfg() {
 	# router's own admin session. Hostnames only ever need this charset; '~' is
 	# the wire-format line separator decoded below.
 	hosts_raw="$(echo "$dec" | sed -n 's/^hosts=//p' | tr -cd 'A-Za-z0-9.~-')"
+	# Exclude list (contributed by Razor221 in PR #5). Unlike hosts, a blob
+	# that has no exclude= line at all - every profile saved before this
+	# field existed, including router-side ones the scheduler replays - must
+	# leave the file alone rather than be treated as "empty" and truncate it,
+	# which would silently drop the Apple/OpenAI/Claude/Google protections.
+	# Comments ('#'), spaces and '/' are kept so the default file's headers
+	# survive a round trip; <, >, &, quotes and shell metacharacters stay
+	# stripped, and the page escapes the textarea content on render anyway.
+	if echo "$dec" | grep -q '^exclude='; then
+		has_exclude=1
+		exclude_raw="$(echo "$dec" | sed -n 's/^exclude=//p' | tr -cd 'A-Za-z0-9.~ #/-')"
+	else
+		has_exclude=0
+	fi
 	[ -f "$ZAPRET_CONF" ] || return 1
 	# Serializes against a second Apply_Event_Cfg (from another GUI submit, or
 	# from Profile_Apply fired by the 30s Scheduler tick) touching the same
@@ -342,6 +356,7 @@ Apply_Event_Cfg() {
 	Lock_Acquire "$LOCK_CONF" 60 || { logger -t "$ADDON" "apply skipped: config lock busy"; return 1; }
 	cp -f "$ZAPRET_CONF" "${ZAPRET_CONF}.bak-gui"
 	[ -f "$HOSTLIST" ] && cp -f "$HOSTLIST" "$HOSTLIST_BAK"
+	[ -f "$HOSTLIST_EXCLUDE" ] && cp -f "$HOSTLIST_EXCLUDE" "${HOSTLIST_EXCLUDE}.bak-gui"
 	sed -i "s/^NFQWS_ENABLE=.*/NFQWS_ENABLE=$en/"         "$ZAPRET_CONF"
 	sed -i "s/^NFQWS_PORTS_TCP=.*/NFQWS_PORTS_TCP=$ports/" "$ZAPRET_CONF"
 	sed -i "s/^MODE_FILTER=.*/MODE_FILTER=$mode/"         "$ZAPRET_CONF"
@@ -387,6 +402,13 @@ Apply_Event_Cfg() {
 	else
 		: > "$HOSTLIST"
 	fi
+	if [ "$has_exclude" = "1" ]; then
+		if [ -n "$exclude_raw" ]; then
+			printf '%s\n' "$exclude_raw" | tr '~' '\n' > "$HOSTLIST_EXCLUDE"
+		else
+			: > "$HOSTLIST_EXCLUDE"
+		fi
+	fi
 	if [ "$en" = "1" ]; then
 		restart_rc=0
 		# 20s cap: a hang (rather than a fast failure) would otherwise block
@@ -399,8 +421,9 @@ Apply_Event_Cfg() {
 		if [ "$restart_rc" -ne 0 ] || ! Nfqws_Matches_Config; then
 			cp -f "${ZAPRET_CONF}.bak-gui" "$ZAPRET_CONF"
 			[ -f "$HOSTLIST_BAK" ] && cp -f "$HOSTLIST_BAK" "$HOSTLIST"
+			[ -f "${HOSTLIST_EXCLUDE}.bak-gui" ] && cp -f "${HOSTLIST_EXCLUDE}.bak-gui" "$HOSTLIST_EXCLUDE"
 			Run_With_Timeout 20 "$ZAPRET_INIT" restart >/dev/null 2>&1
-			logger -t "$ADDON" "apply failed (rc=$restart_rc); rolled back config and hostlist"
+			logger -t "$ADDON" "apply failed (rc=$restart_rc); rolled back config, hostlist and exclude list"
 			Lock_Release "$LOCK_CONF"
 			Gen_Status
 			return 1
@@ -723,6 +746,114 @@ Do_Install() {  # best effort helper; run blockcheck afterwards to pick a strate
 	} >> /tmp/zapret_restart.log 2>&1 &
 	Gen_Status
 }
+######## zapret binary (core) update ###################################
+# Idea and first implementation: Razor221 (PR #5). Reworked here to verify
+# what it installs and to fail safe: only the prebuilt nfqws/tpws are swapped
+# (blockcheck.sh and the init/common scripts stay at the installed version -
+# they depend on each other), every downloaded binary is checked against the
+# release's own sha256sum.txt over verified TLS, the swap happens under the
+# same config lock the watchdog/apply paths honour, and a binary that doesn't
+# come up (or doesn't match the config) is rolled back automatically.
+Bin_Update_Run() {  # $1 = scratch dir
+	local tmp="$1" api="https://api.github.com/repos/bol-van/zapret/releases/latest"
+	local tag cur base tarball src arch d b want got f
+	local nfq_link tpws_link nfq_real tpws_real enabled_now
+
+	curl --version >/dev/null 2>&1 || { echo "ERROR: curl not found - run 'opkg install curl' over SSH"; return 1; }
+	[ -x "$ZAPRET_INIT" ] || { echo "ERROR: zapret is not installed"; return 1; }
+
+	# same two layouts Do_Install accepts: nfq/nfqws inside a source tree, or a
+	# bare nfq -> binary symlink from install_bin.sh
+	nfq_link="${ZAPRET_DIR}/nfq/nfqws"; [ -x "$nfq_link" ] || nfq_link="${ZAPRET_DIR}/nfq"
+	tpws_link="${ZAPRET_DIR}/tpws/tpws"; [ -x "$tpws_link" ] || tpws_link="${ZAPRET_DIR}/tpws"
+	nfq_real="$(readlink -f "$nfq_link" 2>/dev/null)"; tpws_real="$(readlink -f "$tpws_link" 2>/dev/null)"
+	[ -f "$nfq_real" ] || { echo "ERROR: cannot locate the installed nfqws binary"; return 1; }
+	[ -f "$tpws_real" ] || tpws_real=""
+
+	tag="$(curl -fsSL "$api" 2>/dev/null | grep -oE '"tag_name": *"[^"]+"' | head -1 | sed -E 's/.*"([^"]+)"$/\1/')"
+	[ -n "$tag" ] || { echo "ERROR: could not resolve the latest zapret release tag from the GitHub API"; return 1; }
+	cur="$("$nfq_real" --version 2>/dev/null | grep -oE 'v[0-9]+(\.[0-9]+)*' | head -1)"
+	echo "installed: ${cur:-unknown}  latest: $tag"
+	[ "$cur" = "$tag" ] && { echo "already up to date."; return 0; }
+
+	base="https://github.com/bol-van/zapret/releases/download/${tag}"
+	tarball="zapret-${tag}-openwrt-embedded.tar.gz"
+	mkdir -p "$tmp" || return 1
+	curl -fsSL -o "$tmp/$tarball" "$base/$tarball" || { echo "ERROR: download failed for $tarball"; return 1; }
+	curl -fsSL -o "$tmp/sha256sum.txt" "$base/sha256sum.txt" || { echo "ERROR: download failed for sha256sum.txt - refusing to install unverified binaries"; return 1; }
+	tar xzf "$tmp/$tarball" -C "$tmp" || { echo "ERROR: failed to extract $tarball"; return 1; }
+	src="$tmp/zapret-${tag}"
+	[ -d "$src/binaries" ] || { echo "ERROR: unexpected tarball layout (no binaries/ directory)"; return 1; }
+
+	# Pick the arch directory by what actually runs here, not by guessing from
+	# uname (a 32-bit userland on an aarch64 kernel reports aarch64), and never
+	# by substring: linux-arm is a prefix of linux-arm64, linux-mips of
+	# linux-mips64/mipsel, linux-x86 of linux-x86_64. First choice is the
+	# directory the currently installed binary already lives in; otherwise try
+	# every candidate, longest names first so the 64-bit variants win.
+	arch="$(basename "$(dirname "$nfq_real")")"
+	if [ ! -f "$src/binaries/$arch/nfqws" ] || { chmod +x "$src/binaries/$arch/nfqws" 2>/dev/null; ! "$src/binaries/$arch/nfqws" --version >/dev/null 2>&1; }; then
+		arch=""
+		for b in $(ls -r "$src/binaries" 2>/dev/null); do
+			d="$src/binaries/$b"
+			[ -f "$d/nfqws" ] || continue
+			chmod +x "$d/nfqws" 2>/dev/null
+			"$d/nfqws" --version >/dev/null 2>&1 && { arch="$b"; break; }
+		done
+	fi
+	[ -n "$arch" ] || { echo "ERROR: none of the shipped binaries run on this router"; return 1; }
+	echo "architecture: $arch"
+
+	for f in nfqws tpws; do
+		[ "$f" = "tpws" ] && [ -z "$tpws_real" ] && continue
+		want="$(awk -v p="zapret-${tag}/binaries/${arch}/${f}" '$2==p{print $1}' "$tmp/sha256sum.txt" | head -1)"
+		got="$(sha256sum "$src/binaries/$arch/$f" 2>/dev/null | awk '{print $1}')"
+		if [ -z "$want" ] || [ "$want" != "$got" ]; then
+			echo "ERROR: checksum mismatch for $f ($arch) - refusing to install"; return 1
+		fi
+	done
+	echo "checksums verified."
+
+	Lock_Acquire "$LOCK_CONF" 30 || { echo "ERROR: config lock busy - try again in a minute"; return 1; }
+	enabled_now="$(grep -E '^NFQWS_ENABLE=' "$ZAPRET_CONF" 2>/dev/null | cut -d= -f2)"
+	echo "stopping zapret..."
+	Run_With_Timeout 20 "$ZAPRET_INIT" stop >/dev/null 2>&1
+	cp -p "$nfq_real" "${nfq_real}.bak-update"
+	[ -n "$tpws_real" ] && cp -p "$tpws_real" "${tpws_real}.bak-update"
+	if cp "$src/binaries/$arch/nfqws" "${nfq_real}.new" && chmod 0755 "${nfq_real}.new" && mv -f "${nfq_real}.new" "$nfq_real" \
+	   && { [ -z "$tpws_real" ] || { cp "$src/binaries/$arch/tpws" "${tpws_real}.new" && chmod 0755 "${tpws_real}.new" && mv -f "${tpws_real}.new" "$tpws_real"; }; }; then
+		echo "binaries replaced, starting zapret..."
+		Run_With_Timeout 20 "$ZAPRET_INIT" start >/dev/null 2>&1
+		sleep 2
+		if [ "$enabled_now" != "1" ] || Nfqws_Matches_Config; then
+			echo "updated to $("$nfq_real" --version 2>/dev/null | grep -oE 'v[0-9]+(\.[0-9]+)*' | head -1) (previous binaries kept as *.bak-update)."
+			logger -t "$ADDON" "zapret binaries updated ${cur:-?} -> $tag ($arch)"
+			Lock_Release "$LOCK_CONF"
+			return 0
+		fi
+		echo "ERROR: zapret did not come up healthy with the new binaries - rolling back"
+	else
+		echo "ERROR: failed to install the new binaries - rolling back"
+	fi
+	rm -f "${nfq_real}.new" "${tpws_real}.new" 2>/dev/null
+	mv -f "${nfq_real}.bak-update" "$nfq_real"
+	[ -n "$tpws_real" ] && mv -f "${tpws_real}.bak-update" "$tpws_real"
+	Run_With_Timeout 20 "$ZAPRET_INIT" start >/dev/null 2>&1
+	logger -t "$ADDON" "zapret binary update to $tag failed; rolled back"
+	Lock_Release "$LOCK_CONF"
+	return 1
+}
+Do_BinUpdate() {
+	local tmp="/tmp/zapret-binupdate-$$"
+	echo "zapret binary update started - $(date)" > /tmp/zapret_restart.log
+	{
+		Bin_Update_Run "$tmp"
+		rm -rf "$tmp"
+		echo "### binary update step done ###"
+		Gen_Status
+	} >> /tmp/zapret_restart.log 2>&1 &
+	Gen_Status
+}
 Do_Update() {
 	local repo="https://raw.githubusercontent.com/Jarvis322/Asus-Merlin-Zapret-GUI/main" ts
 	# Same-directory dotfile temps, not /tmp: /tmp is tmpfs and /jffs (where
@@ -846,6 +977,7 @@ Handle_Event() {
 		"restart zs"*)  Schedule_Save_Event "${ev#restart zs}" ;;
 		"restart_zs"*)  Schedule_Save_Event "${ev#restart_zs}" ;;
 		*zgbc*)          Do_Blockcheck_Ev "${ev#*zgbc}" ;;
+		*zapretbinupdate*) Do_BinUpdate ;;
 		*zapretinstall*) Do_Install ;;
 		*zapretrestart*) Do_Restart ;;
 		*zapreton*)      Do_Enable ;;
