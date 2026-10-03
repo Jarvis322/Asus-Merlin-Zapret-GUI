@@ -395,6 +395,21 @@ Apply_Event_Cfg() {
 	else
 		{ echo "NFQWS_OPT=\""; oi="$IFS"; IFS=','; for p in $ports; do echo "--filter-tcp=$p $sline <HOSTLIST> --new"; done; IFS="$oi"; echo "\""; } > /tmp/zg_opt
 	fi
+	# QUIC (UDP 443) is desynced only for hostlist entries. Upstream's default
+	# applies it to every QUIC flow, which made general browsing slow (issue #3);
+	# <HOSTLIST_NOAUTO> keeps unlisted traffic untouched. Skipped in "none" mode
+	# because that has no list to scope it to.
+	quic_fake="${ZAPRET_DIR}/files/fake/quic_initial_www_google_com.bin"
+	if [ "$mode" != "none" ] && [ -f "$quic_fake" ]; then
+		sed -i '$d' /tmp/zg_opt
+		{
+			echo "--filter-udp=443 --dpi-desync=fake --dpi-desync-repeats=6 --dpi-desync-fake-quic=$quic_fake <HOSTLIST_NOAUTO>"
+			echo "\""
+		} >> /tmp/zg_opt
+		sed -i "s/^NFQWS_PORTS_UDP=.*/NFQWS_PORTS_UDP=443/" "$ZAPRET_CONF"
+	else
+		sed -i "s/^NFQWS_PORTS_UDP=.*/NFQWS_PORTS_UDP=/" "$ZAPRET_CONF"
+	fi
 	awk 'BEGIN{while((getline l < "/tmp/zg_opt")>0) buf=buf l "\n"} /^NFQWS_OPT=/{printf "%s", buf; skip=1; next} skip==1{ if($0=="\"") skip=0; next } {print}' "$ZAPRET_CONF" > "${ZAPRET_CONF}.new" && mv "${ZAPRET_CONF}.new" "$ZAPRET_CONF"
 	rm -f /tmp/zg_opt
 	if [ -n "$hosts_raw" ]; then
