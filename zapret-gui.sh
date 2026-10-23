@@ -360,6 +360,10 @@ Apply_Event_Cfg() {
 	sed -i "s/^NFQWS_ENABLE=.*/NFQWS_ENABLE=$en/"         "$ZAPRET_CONF"
 	sed -i "s/^NFQWS_PORTS_TCP=.*/NFQWS_PORTS_TCP=$ports/" "$ZAPRET_CONF"
 	sed -i "s/^MODE_FILTER=.*/MODE_FILTER=$mode/"         "$ZAPRET_CONF"
+	# Always clear UDP: a config applied while the QUIC profile existed keeps
+	# NFQWS_PORTS_UDP=443 forever otherwise, queueing every QUIC flow into
+	# nfqws with no profile to match (slow pages, first load fails).
+	sed -i "s/^NFQWS_PORTS_UDP=.*/NFQWS_PORTS_UDP=/"       "$ZAPRET_CONF"
 	# Record what the GUI actually chose, instead of making Gen_Status guess it
 	# back from the raw NFQWS_OPT text later. The old guess (pattern-matching
 	# "dpi-desync=fake" etc.) mislabeled a "custom" strategy built on top of
